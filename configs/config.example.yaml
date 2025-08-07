@@ -1,0 +1,9 @@
+probe: local-1
+ua: "SPYDERProbe/1.0 (+https://github.com/gustycube/project-arachnet)"
+exclude_tlds: ["gov","mil","int"]
+concurrency: 256
+metrics_addr: ":9090"
+batch_max_edges: 10000
+batch_flush_sec: 2
+spool_dir: "spool"
+ingest: ""

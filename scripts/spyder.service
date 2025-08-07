@@ -1,0 +1,15 @@
+[Unit]
+Description=SPYDER Probe
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spyder
+WorkingDirectory=/opt/spyder
+ExecStart=/opt/spyder/spyder -domains=/opt/spyder/domains.txt -metrics_addr=:9090
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
