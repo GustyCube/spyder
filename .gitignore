@@ -12,3 +12,7 @@ bin/
 out.jsonl
 spool/
 coverage.txt
+
+# Built binaries
+spyder
+seed
