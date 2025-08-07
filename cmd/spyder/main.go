@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	
+	"time"
 
 	"github.com/gustycube/spyder-probe/internal/dedup"
 	"github.com/gustycube/spyder-probe/internal/emit"
@@ -43,7 +43,7 @@ func main() {
 	flag.StringVar(&probeID, "probe", "local-1", "probe id")
 	flag.StringVar(&runID, "run", fmt.Sprintf("run-%d", time.Now().Unix()), "run id")
 	flag.IntVar(&concurrency, "concurrency", 256, "concurrent workers")
-	flag.StringVar(&ua, "ua", "SPYDERProbe/1.0 (+https://github.com/gustycube/project-arachnet)", "user-agent")
+	flag.StringVar(&ua, "ua", "SPYDERProbe/1.0 (+https://github.com/gustycube/spyder)", "user-agent")
 	flag.StringVar(&exclude, "exclude_tlds", "gov,mil,int", "comma-separated TLDs to skip crawling")
 	flag.StringVar(&metricsAddr, "metrics_addr", ":9090", "metrics listen addr (empty to disable)")
 	flag.IntVar(&batchMax, "batch_max_edges", 10000, "max edges per batch before flush")
@@ -63,6 +63,7 @@ func main() {
 	if queueKey == "" { queueKey = "spyder:queue" }
 	leaseTTL := 120 * time.Second
 
+	ctx := context.Background()
 	log := logging.New()
 	shutdown, err := telemetry.Init(ctx, otelEndpoint, otelService, otelInsecure)
 	if err != nil { log.Warn("otel init failed", "err", err) } else { defer shutdown(context.Background()) }
@@ -128,10 +129,10 @@ func main() {
 					_ = ack()
 				}
 			}
-		}
 		}()
 	} else {
 		go func() {
+		defer close(tasks)
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 1024), 1024*1024)
 		for sc.Scan() {
@@ -140,9 +141,8 @@ func main() {
 			line = strings.ToLower(strings.TrimSuffix(line, "."))
 			tasks <- line
 		}
-		close(tasks)
+	}()
 	}
-		}()
 
 	p := probe.New(ua, probeID, runID, excluded, d, batches, log)
 	p.Run(ctx, tasks, concurrency)

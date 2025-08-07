@@ -1,5 +1,5 @@
 probe: local-1
-ua: "SPYDERProbe/1.0 (+https://github.com/gustycube/project-arachnet)"
+ua: "SPYDERProbe/1.0 (+https://github.com/gustycube/spyder)"
 exclude_tlds: ["gov","mil","int"]
 concurrency: 256
 metrics_addr: ":9090"
