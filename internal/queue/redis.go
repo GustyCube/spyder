@@ -5,7 +5,7 @@ import (
 	"time"
 	"encoding/json"
 
-	"github.com/go-redis/redis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 type RedisQueue struct {
