@@ -12,7 +12,8 @@ bin/
 out.jsonl
 spool/
 coverage.txt
-
+docs/node_modules
+docs/.vitepress/node_modules
 # Built binaries
 spyder
 seed
