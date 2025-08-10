@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'spyder-probe'
+    static_configs:
+      - targets: ['spyder:9090']
+        labels:
+          service: 'spyder'
+          environment: 'docker'
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+        labels:
+          service: 'redis'
+          environment: 'docker'

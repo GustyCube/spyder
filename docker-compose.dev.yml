@@ -1,0 +1,44 @@
+version: '3.8'
+
+# Simplified Docker Compose for local development
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+services:
+  # Redis for deduplication
+  redis:
+    image: redis:7-alpine
+    container_name: spyder-dev-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # SPYDER probe (built locally)
+  spyder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for development
+    container_name: spyder-dev
+    environment:
+      - REDIS_ADDR=redis:6379
+      - LOG_LEVEL=debug
+    volumes:
+      - ./configs:/app/configs
+      - ./spool:/app/spool
+      - ./bin:/app/bin  # Mount local binary for hot reload
+    command: >
+      /app/bin/spyder
+      -domains=/app/configs/domains.txt
+      -concurrency=64
+      -metrics_addr=:9090
+    ports:
+      - "9090:9090"  # Expose metrics directly
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped

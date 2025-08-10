@@ -1,0 +1,33 @@
+# SPYDER Configuration for Docker Compose environment
+
+# Core Configuration
+domains: /app/configs/domains.txt  # Path to domain list in container
+probe: docker-probe-1              # Probe identifier for Docker instance
+run: ""                            # Auto-generated run ID
+ua: "SPYDERProbe/1.0 (Docker)"    # User agent with Docker identifier
+
+# Exclusions
+exclude_tlds:
+  - gov
+  - mil
+  - int
+
+# Performance (tuned for container environment)
+concurrency: 128                   # Reduced for container resource limits
+batch_max_edges: 5000             # Smaller batches for container
+batch_flush_sec: 5                # Longer flush interval
+
+# Output Configuration
+ingest: "http://mock-ingest/ingest"  # Mock ingest server for testing
+spool_dir: /app/spool              # Persistent spool directory
+
+# Observability
+metrics_addr: ":9090"              # Expose metrics for Prometheus
+otel_endpoint: ""                  # OpenTelemetry disabled by default
+otel_insecure: true
+otel_service: "spyder-probe-docker"
+
+# Redis Configuration (uses environment variables)
+# REDIS_ADDR is set to redis:6379 in docker-compose.yml
+# REDIS_QUEUE_ADDR is set to redis:6379 in docker-compose.yml
+# REDIS_QUEUE_KEY is set to spyder:queue in docker-compose.yml

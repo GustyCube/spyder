@@ -18,3 +18,26 @@ run:
 
 docs:
 	cd docs && npm i && npm run docs:dev
+
+# Docker operations
+docker-build:
+	docker build -t spyder-probe:latest .
+
+docker-up:
+	docker-compose up -d
+
+docker-down:
+	docker-compose down
+
+docker-logs:
+	docker-compose logs -f spyder
+
+docker-dev:
+	docker-compose -f docker-compose.dev.yml up
+
+docker-dev-down:
+	docker-compose -f docker-compose.dev.yml down
+
+docker-clean:
+	docker-compose down -v
+	docker-compose -f docker-compose.dev.yml down -v
