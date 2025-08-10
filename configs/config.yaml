@@ -1,0 +1,40 @@
+# SPYDER Configuration File
+# This file demonstrates all available configuration options
+
+# Core Configuration
+domains: domains.txt              # Path to newline-delimited domain list
+probe: production-1               # Unique probe identifier
+run: ""                          # Run ID (auto-generated if empty)
+ua: "SPYDERProbe/1.0"           # HTTP User-Agent string
+
+# Exclusions
+exclude_tlds:                    # TLDs to skip
+  - gov
+  - mil
+  - int
+
+# Performance
+concurrency: 256                 # Number of concurrent workers
+batch_max_edges: 10000          # Maximum edges per batch
+batch_flush_sec: 2              # Batch flush interval (seconds)
+
+# Output Configuration
+ingest: ""                      # HTTP(S) ingest endpoint (empty for stdout)
+spool_dir: spool                # Directory for failed batch persistence
+
+# mTLS Configuration (optional)
+mtls_cert: ""                  # Path to client certificate
+mtls_key: ""                   # Path to client key
+mtls_ca: ""                    # Path to CA bundle
+
+# Observability
+metrics_addr: ":9090"           # Prometheus metrics endpoint
+otel_endpoint: ""               # OpenTelemetry endpoint
+otel_insecure: true            # Use insecure connection for OTEL
+otel_service: "spyder-probe"   # Service name for OTEL
+
+# Redis Configuration (optional)
+# These can also be set via environment variables
+redis_addr: ""                  # Redis server for deduplication
+redis_queue_addr: ""            # Redis server for work queue
+redis_queue_key: "spyder:queue" # Redis key for work queue

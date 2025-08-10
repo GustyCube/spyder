@@ -1,27 +1,27 @@
 package main
 
 import (
-	
-	"github.com/gustycube/spyder-probe/internal/telemetry"
-	"github.com/gustycube/spyder-probe/internal/queue"
 	"bufio"
 	"context"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/gustycube/spyder-probe/internal/config"
 	"github.com/gustycube/spyder-probe/internal/dedup"
 	"github.com/gustycube/spyder-probe/internal/emit"
 	"github.com/gustycube/spyder-probe/internal/logging"
 	"github.com/gustycube/spyder-probe/internal/metrics"
 	"github.com/gustycube/spyder-probe/internal/probe"
+	"github.com/gustycube/spyder-probe/internal/queue"
+	"github.com/gustycube/spyder-probe/internal/telemetry"
 )
 
 func main() {
+	var configFile string
 	var domainsFile string
 	var ingest string
 	var probeID string
@@ -38,116 +38,231 @@ func main() {
 	var otelService string
 	var mtlsCert, mtlsKey, mtlsCA string
 
+	// Add config file flag
+	flag.StringVar(&configFile, "config", "", "path to config file (YAML or JSON)")
 	flag.StringVar(&domainsFile, "domains", "", "path to newline-separated domains")
 	flag.StringVar(&ingest, "ingest", "", "ingest endpoint (optional). If empty, prints JSON batches to stdout")
-	flag.StringVar(&probeID, "probe", "local-1", "probe id")
-	flag.StringVar(&runID, "run", fmt.Sprintf("run-%d", time.Now().Unix()), "run id")
-	flag.IntVar(&concurrency, "concurrency", 256, "concurrent workers")
-	flag.StringVar(&ua, "ua", "SPYDERProbe/1.0 (+https://github.com/gustycube/spyder)", "user-agent")
-	flag.StringVar(&exclude, "exclude_tlds", "gov,mil,int", "comma-separated TLDs to skip crawling")
-	flag.StringVar(&metricsAddr, "metrics_addr", ":9090", "metrics listen addr (empty to disable)")
-	flag.IntVar(&batchMax, "batch_max_edges", 10000, "max edges per batch before flush")
-	flag.IntVar(&batchFlushSec, "batch_flush_sec", 2, "seconds timer to flush a batch")
-	flag.StringVar(&spoolDir, "spool_dir", "spool", "spool dir for failed batches")
+	flag.StringVar(&probeID, "probe", "", "probe id")
+	flag.StringVar(&runID, "run", "", "run id")
+	flag.IntVar(&concurrency, "concurrency", 0, "concurrent workers")
+	flag.StringVar(&ua, "ua", "", "user-agent")
+	flag.StringVar(&exclude, "exclude_tlds", "", "comma-separated TLDs to skip crawling")
+	flag.StringVar(&metricsAddr, "metrics_addr", "", "metrics listen addr (empty to disable)")
+	flag.IntVar(&batchMax, "batch_max_edges", 0, "max edges per batch before flush")
+	flag.IntVar(&batchFlushSec, "batch_flush_sec", 0, "seconds timer to flush a batch")
+	flag.StringVar(&spoolDir, "spool_dir", "", "spool dir for failed batches")
 	flag.StringVar(&mtlsCert, "mtls_cert", "", "client cert (PEM) for mTLS to ingest")
 	flag.StringVar(&mtlsKey, "mtls_key", "", "client key (PEM) for mTLS to ingest")
 	flag.StringVar(&mtlsCA, "mtls_ca", "", "CA bundle (PEM) for mTLS to ingest")
 	flag.StringVar(&otelEndpoint, "otel_endpoint", "", "OTLP HTTP endpoint (host:port)")
 	flag.BoolVar(&otelInsecure, "otel_insecure", true, "OTLP insecure (no TLS)")
-	flag.StringVar(&otelService, "otel_service", "spyder-probe", "OTEL service.name")
+	flag.StringVar(&otelService, "otel_service", "", "OTEL service.name")
 	flag.Parse()
-
-	// Optional Redis queue
-	var queueAddr string = os.Getenv("REDIS_QUEUE_ADDR")
-	var queueKey string = os.Getenv("REDIS_QUEUE_KEY")
-	if queueKey == "" { queueKey = "spyder:queue" }
-	leaseTTL := 120 * time.Second
 
 	ctx := context.Background()
 	log := logging.New()
-	shutdown, err := telemetry.Init(ctx, otelEndpoint, otelService, otelInsecure)
-	if err != nil { log.Warn("otel init failed", "err", err) } else { defer shutdown(context.Background()) }
 	defer log.Sync()
 
-	if domainsFile == "" {
-		log.Fatal("missing -domains")
+	// Load configuration
+	var cfg *config.Config
+	var err error
+
+	if configFile != "" {
+		// Load from config file
+		cfg, err = config.LoadFromFile(configFile)
+		if err != nil {
+			log.Fatal("failed to load config file", "file", configFile, "err", err)
+		}
+		log.Info("loaded config from file", "file", configFile)
+	} else {
+		// Create default config
+		cfg = &config.Config{}
+		cfg.SetDefaults()
 	}
 
+	// Load environment variables
+	cfg.LoadFromEnv()
+
+	// Override with command-line flags (if provided)
+	flags := make(map[string]interface{})
+	if domainsFile != "" {
+		flags["domains"] = domainsFile
+	}
+	if probeID != "" {
+		flags["probe"] = probeID
+	}
+	if runID != "" {
+		flags["run"] = runID
+	}
+	if ua != "" {
+		flags["ua"] = ua
+	}
+	if concurrency > 0 {
+		flags["concurrency"] = concurrency
+	}
+	if ingest != "" {
+		flags["ingest"] = ingest
+	}
 	if metricsAddr != "" {
-		go metrics.Serve(metricsAddr, log)
-		log.Info("metrics server started", "addr", metricsAddr)
+		flags["metrics_addr"] = metricsAddr
+	}
+	if batchMax > 0 {
+		flags["batch_max_edges"] = batchMax
+	}
+	if batchFlushSec > 0 {
+		flags["batch_flush_sec"] = batchFlushSec
+	}
+	if spoolDir != "" {
+		flags["spool_dir"] = spoolDir
+	}
+	if mtlsCert != "" {
+		flags["mtls_cert"] = mtlsCert
+	}
+	if mtlsKey != "" {
+		flags["mtls_key"] = mtlsKey
+	}
+	if mtlsCA != "" {
+		flags["mtls_ca"] = mtlsCA
+	}
+	if otelEndpoint != "" {
+		flags["otel_endpoint"] = otelEndpoint
+	}
+	if otelService != "" {
+		flags["otel_service"] = otelService
+	}
+	flags["otel_insecure"] = otelInsecure
+
+	cfg.MergeWithFlags(flags)
+
+	// Handle exclude_tlds flag specially
+	if exclude != "" {
+		cfg.ExcludeTLDs = []string{}
+		for _, t := range strings.Split(exclude, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				cfg.ExcludeTLDs = append(cfg.ExcludeTLDs, t)
+			}
+		}
 	}
 
-	var excluded []string
-	for _, t := range strings.Split(exclude, ",") {
-		t = strings.TrimSpace(t)
-		if t != "" { excluded = append(excluded, t) }
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		log.Fatal("invalid configuration", "err", err)
 	}
 
-	f, err := os.Open(domainsFile)
+	// Initialize telemetry
+	shutdown, err := telemetry.Init(ctx, cfg.OTELEndpoint, cfg.OTELService, cfg.OTELInsecure)
+	if err != nil {
+		log.Warn("otel init failed", "err", err)
+	} else {
+		defer shutdown(context.Background())
+	}
+
+	// Start metrics server
+	if cfg.MetricsAddr != "" {
+		go metrics.Serve(cfg.MetricsAddr, log)
+		log.Info("metrics server started", "addr", cfg.MetricsAddr)
+	}
+
+	// Open domains file
+	f, err := os.Open(cfg.Domains)
 	if err != nil {
 		log.Fatal("open domains", "err", err)
 	}
 	defer f.Close()
 
+	// Setup signal handling
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Initialize deduplication
 	var d dedup.Interface
-	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
-		rd, err := dedup.NewRedis(addr, 24*time.Hour)
-		if err != nil { log.Fatal("redis init", "err", err) }
-		log.Info("redis dedupe enabled", "addr", addr)
+	if cfg.RedisAddr != "" {
+		rd, err := dedup.NewRedis(cfg.RedisAddr, 24*time.Hour)
+		if err != nil {
+			log.Fatal("redis init", "err", err)
+		}
+		log.Info("redis dedupe enabled", "addr", cfg.RedisAddr)
 		d = rd
 	} else {
 		d = dedup.NewMemory()
 		log.Info("memory dedupe enabled")
 	}
 
+	// Initialize emitter
 	batches := make(chan emit.Batch, 1024)
-	emitter := emit.NewEmitter(ingest, probeID, runID, batchMax, time.Duration(batchFlushSec)*time.Second, spoolDir, mtlsCert, mtlsKey, mtlsCA)
+	emitter := emit.NewEmitter(
+		cfg.Ingest,
+		cfg.Probe,
+		cfg.Run,
+		cfg.BatchMaxEdges,
+		time.Duration(cfg.BatchFlushSec)*time.Second,
+		cfg.SpoolDir,
+		cfg.MTLSCert,
+		cfg.MTLSKey,
+		cfg.MTLSCA,
+	)
 	go emitter.Run(ctx, batches, log)
 
+	// Initialize task queue
 	tasks := make(chan string, 8192)
 
-	// reader or queue consumer
-	if queueAddr != "" {
-		log.Info("redis queue enabled", "addr", queueAddr, "key", queueKey)
-		q, err := queue.NewRedis(queueAddr, queueKey, leaseTTL)
-		if err != nil { log.Fatal("redis queue init", "err", err) }
+	// Use Redis queue or file reader
+	if cfg.RedisQueueAddr != "" {
+		log.Info("redis queue enabled", "addr", cfg.RedisQueueAddr, "key", cfg.RedisQueueKey)
+		q, err := queue.NewRedis(cfg.RedisQueueAddr, cfg.RedisQueueKey, 120*time.Second)
+		if err != nil {
+			log.Fatal("redis queue init", "err", err)
+		}
 		go func() {
 			defer close(tasks)
 			for {
 				select {
-				case <-ctx.Done(): return
+				case <-ctx.Done():
+					return
 				default:
 					host, ack, err := q.Lease(ctx)
-					if err != nil { continue }
-					if host == "" { continue }
+					if err != nil {
+						continue
+					}
+					if host == "" {
+						continue
+					}
 					tasks <- host
-					// ack is called in worker after crawl; we pass via a channel? keep simple: ack immediately.
 					_ = ack()
 				}
 			}
 		}()
 	} else {
 		go func() {
-		defer close(tasks)
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 1024), 1024*1024)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" || strings.HasPrefix(line, "#") { continue }
-			line = strings.ToLower(strings.TrimSuffix(line, "."))
-			tasks <- line
-		}
-	}()
+			defer close(tasks)
+			sc := bufio.NewScanner(f)
+			sc.Buffer(make([]byte, 0, 1024), 1024*1024)
+			for sc.Scan() {
+				line := strings.TrimSpace(sc.Text())
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				line = strings.ToLower(strings.TrimSuffix(line, "."))
+				tasks <- line
+			}
+		}()
 	}
 
-	p := probe.New(ua, probeID, runID, excluded, d, batches, log)
-	p.Run(ctx, tasks, concurrency)
+	// Log configuration
+	log.Info("starting spyder",
+		"probe", cfg.Probe,
+		"run", cfg.Run,
+		"concurrency", cfg.Concurrency,
+		"exclude_tlds", cfg.ExcludeTLDs,
+		"config_file", configFile,
+	)
 
-	// wait emitter to drain
+	// Start probe
+	p := probe.New(cfg.UA, cfg.Probe, cfg.Run, cfg.ExcludeTLDs, d, batches, log)
+	p.Run(ctx, tasks, cfg.Concurrency)
+
+	// Wait for emitter to drain
 	emitter.Drain(log)
 	log.Info("shutdown complete")
 }
