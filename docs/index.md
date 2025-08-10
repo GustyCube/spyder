@@ -8,6 +8,7 @@
 - [Quick Start Guide](guide/getting-started.md) - Get up and running quickly
 - [Installation Guide](guide/installation.md) - Detailed installation instructions
 - [CLI Reference](config/cli.md) - Complete command-line options
+- [API Reference](api/) - Complete API documentation and examples
 
 ### Architecture & Design
 - [System Overview](architecture/overview.md) - High-level architecture
