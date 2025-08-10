@@ -319,8 +319,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, 
 
 **Quick Development Setup:**
 ```bash
-git clone https://github.com/gustycube/spyder-probe.git
-cd spyder-probe
+git clone https://github.com/gustycube/spyder.git
+cd spyder
 make lint test build
 ./bin/spyder -domains=configs/test-domains.txt
 ```
