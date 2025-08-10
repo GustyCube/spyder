@@ -3,6 +3,12 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'SPYDER Probe Pro',
   description: 'Production-grade internet mapping probe for discovering domain relationships',
+  ignoreDeadLinks: [
+    // Allow localhost URLs in documentation examples
+    /^https?:\/\/localhost/,
+    // Allow Docker internal URLs
+    /^https?:\/\/.*:(\d+)/
+  ],
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },

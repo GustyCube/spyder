@@ -301,9 +301,12 @@ cat /tmp/spyder-stream | jq '.edges[]' | custom-processor
 
 ## 📚 Documentation
 
-- **[Installation Guide](docs/guide/installation.md)** - Production setup and deployment
-- **[Operations Manual](docs/ops/)** - Monitoring, troubleshooting, performance tuning
-- **[Architecture Deep-Dive](docs/)** - Technical specifications and design decisions
+- **[📖 Full Documentation](https://gustycube.github.io/spyder/)** - Complete documentation site
+- **[🚀 Installation Guide](https://gustycube.github.io/spyder/guide/installation)** - Production setup and deployment  
+- **[⚙️ Operations Manual](https://gustycube.github.io/spyder/ops/)** - Monitoring, troubleshooting, performance tuning
+- **[🏗️ Architecture Deep-Dive](https://gustycube.github.io/spyder/architecture/overview)** - Technical specifications and design decisions
+- **[🔧 Component Reference](https://gustycube.github.io/spyder/components/)** - Detailed component documentation
+- **[📡 API Reference](https://gustycube.github.io/spyder/api/overview)** - Complete API documentation
 
 ### Local Development
 ```bash
