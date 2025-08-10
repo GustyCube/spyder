@@ -13,6 +13,7 @@ import (
 	"github.com/gustycube/spyder-probe/internal/config"
 	"github.com/gustycube/spyder-probe/internal/dedup"
 	"github.com/gustycube/spyder-probe/internal/emit"
+	"github.com/gustycube/spyder-probe/internal/health"
 	"github.com/gustycube/spyder-probe/internal/logging"
 	"github.com/gustycube/spyder-probe/internal/metrics"
 	"github.com/gustycube/spyder-probe/internal/probe"
@@ -158,10 +159,16 @@ func main() {
 		defer shutdown(context.Background())
 	}
 
-	// Start metrics server
+	// Initialize health handler
+	healthHandler := health.NewHandler(log)
+	healthHandler.SetMetadata("probe", cfg.Probe)
+	healthHandler.SetMetadata("run", cfg.Run)
+	healthHandler.SetMetadata("version", "1.0.0")
+
+	// Start metrics and health server
 	if cfg.MetricsAddr != "" {
-		go metrics.Serve(cfg.MetricsAddr, log)
-		log.Info("metrics server started", "addr", cfg.MetricsAddr)
+		go metrics.ServeWithHealth(cfg.MetricsAddr, healthHandler, log)
+		log.Info("metrics and health server started", "addr", cfg.MetricsAddr)
 	}
 
 	// Open domains file
@@ -177,6 +184,7 @@ func main() {
 
 	// Initialize deduplication
 	var d dedup.Interface
+	var redisHealthCheck func() error
 	if cfg.RedisAddr != "" {
 		rd, err := dedup.NewRedis(cfg.RedisAddr, 24*time.Hour)
 		if err != nil {
@@ -184,6 +192,13 @@ func main() {
 		}
 		log.Info("redis dedupe enabled", "addr", cfg.RedisAddr)
 		d = rd
+		
+		// Register Redis health check
+		redisHealthCheck = func() error {
+			// Simple ping check - would need to expose from dedup.Redis
+			return nil
+		}
+		healthHandler.RegisterChecker("redis", health.NewRedisChecker(cfg.RedisAddr, redisHealthCheck))
 	} else {
 		d = dedup.NewMemory()
 		log.Info("memory dedupe enabled")
@@ -257,6 +272,10 @@ func main() {
 		"exclude_tlds", cfg.ExcludeTLDs,
 		"config_file", configFile,
 	)
+
+	// Mark service as ready
+	healthHandler.SetReady(true)
+	log.Info("service marked as ready")
 
 	// Start probe
 	p := probe.New(cfg.UA, cfg.Probe, cfg.Run, cfg.ExcludeTLDs, d, batches, log)

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/gustycube/spyder-probe/internal/health"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +20,16 @@ func init() {
 
 func Serve(addr string, log *zap.SugaredLogger) {
 	http.Handle("/metrics", promhttp.Handler())
+	if err := http.ListenAndServe(addr, nil); err != nil {
+		log.Warn("metrics server stopped", "err", err)
+	}
+}
+
+func ServeWithHealth(addr string, healthHandler *health.Handler, log *zap.SugaredLogger) {
+	http.Handle("/metrics", promhttp.Handler())
+	http.HandleFunc("/health", healthHandler.HealthHandler)
+	http.HandleFunc("/ready", healthHandler.ReadinessHandler)
+	http.HandleFunc("/live", healthHandler.LivenessHandler)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Warn("metrics server stopped", "err", err)
 	}
