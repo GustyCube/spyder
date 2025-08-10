@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gustycube/spyder-probe/internal/queue"
+	"github.com/gustycube/spyder/internal/queue"
 )
 
 func main() {

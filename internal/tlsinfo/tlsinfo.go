@@ -8,7 +8,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gustycube/spyder-probe/internal/emit"
+	"github.com/gustycube/spyder/internal/emit"
 )
 
 func FetchCert(host string) (*emit.NodeCert, error) {

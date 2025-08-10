@@ -1,4 +1,4 @@
-module github.com/gustycube/spyder-probe
+module github.com/gustycube/spyder
 
 go 1.22
 
@@ -17,6 +17,7 @@ require (
 	go.opentelemetry.io/otel v1.28.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.28.0
 	go.opentelemetry.io/otel/sdk v1.28.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -41,5 +42,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240701130421-f6361c86f094 // indirect
 	google.golang.org/grpc v1.64.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

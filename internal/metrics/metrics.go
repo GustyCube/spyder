@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/gustycube/spyder-probe/internal/health"
+	"github.com/gustycube/spyder/internal/health"
 	"go.uber.org/zap"
 )
 

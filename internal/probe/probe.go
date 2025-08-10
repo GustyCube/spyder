@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gustycube/spyder-probe/internal/dedup"
-	"github.com/gustycube/spyder-probe/internal/dns"
-	"github.com/gustycube/spyder-probe/internal/emit"
-	"github.com/gustycube/spyder-probe/internal/extract"
-	"github.com/gustycube/spyder-probe/internal/httpclient"
-	"github.com/gustycube/spyder-probe/internal/rate"
-	"github.com/gustycube/spyder-probe/internal/robots"
-	"github.com/gustycube/spyder-probe/internal/tlsinfo"
-	"github.com/gustycube/spyder-probe/internal/metrics"
+	"github.com/gustycube/spyder/internal/dedup"
+	"github.com/gustycube/spyder/internal/dns"
+	"github.com/gustycube/spyder/internal/emit"
+	"github.com/gustycube/spyder/internal/extract"
+	"github.com/gustycube/spyder/internal/httpclient"
+	"github.com/gustycube/spyder/internal/rate"
+	"github.com/gustycube/spyder/internal/robots"
+	"github.com/gustycube/spyder/internal/tlsinfo"
+	"github.com/gustycube/spyder/internal/metrics"
 	"go.uber.org/zap"
 )
 
@@ -29,17 +29,18 @@ type Probe struct {
 	excluded []string
 	dedup    dedup.Interface
 	out      chan<- emit.Batch
-	hc       *http.Client
+	hc       *httpclient.ResilientClient
 	rob      *robots.Cache
 	ratelim  *rate.PerHost
 	log      *zap.SugaredLogger
 }
 
 func New(ua, probeID, runID string, excluded []string, d dedup.Interface, out chan<- emit.Batch, log *zap.SugaredLogger) *Probe {
-	hc := httpclient.Default()
+	baseClient := httpclient.Default()
+	hc := httpclient.NewResilientClient(baseClient)
 	return &Probe{
 		ua: ua, probeID: probeID, runID: runID, excluded: excluded, dedup: d, out: out,
-		hc: hc, rob: robots.NewCache(hc, ua), ratelim: rate.New(1.0, 1), log: log,
+		hc: hc, rob: robots.NewCache(baseClient, ua), ratelim: rate.New(1.0, 1), log: log,
 	}
 }
 
@@ -107,9 +108,11 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 	// Per-host rate limit
 	p.ratelim.Wait(host)
 
-	// GET root HTML
+	// GET root HTML with separate timeout context
 	root := &url.URL{Scheme: "https", Host: host, Path: "/"}
-	req, _ := http.NewRequestWithContext(ctx, "GET", root.String(), nil)
+	httpCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(httpCtx, "GET", root.String(), nil)
 	req.Header.Set("User-Agent", p.ua)
 	resp, err := p.hc.Do(req)
 	if err == nil {

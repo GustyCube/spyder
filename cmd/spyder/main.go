@@ -12,15 +12,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gustycube/spyder-probe/internal/config"
-	"github.com/gustycube/spyder-probe/internal/dedup"
-	"github.com/gustycube/spyder-probe/internal/emit"
-	"github.com/gustycube/spyder-probe/internal/health"
-	"github.com/gustycube/spyder-probe/internal/logging"
-	"github.com/gustycube/spyder-probe/internal/metrics"
-	"github.com/gustycube/spyder-probe/internal/probe"
-	"github.com/gustycube/spyder-probe/internal/queue"
-	"github.com/gustycube/spyder-probe/internal/telemetry"
+	"github.com/gustycube/spyder/internal/config"
+	"github.com/gustycube/spyder/internal/dedup"
+	"github.com/gustycube/spyder/internal/emit"
+	"github.com/gustycube/spyder/internal/health"
+	"github.com/gustycube/spyder/internal/logging"
+	"github.com/gustycube/spyder/internal/metrics"
+	"github.com/gustycube/spyder/internal/probe"
+	"github.com/gustycube/spyder/internal/queue"
+	"github.com/gustycube/spyder/internal/telemetry"
 )
 
 func main() {

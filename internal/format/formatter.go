@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gustycube/spyder-probe/internal/types"
+	"github.com/gustycube/spyder/internal/types"
 )
 
 // OutputFormat represents the output format type

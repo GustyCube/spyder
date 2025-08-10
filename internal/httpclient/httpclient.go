@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gustycube/spyder-probe/internal/circuitbreaker"
+	"github.com/gustycube/spyder/internal/circuitbreaker"
 )
 
 func Default() *http.Client {

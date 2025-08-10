@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"

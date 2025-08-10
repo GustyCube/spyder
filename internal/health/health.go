@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gustycube/spyder-probe/internal/logging"
+	"github.com/gustycube/spyder/internal/logging"
 )
 
 // Status represents the health status of a component
