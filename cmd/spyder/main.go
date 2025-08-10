@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -39,6 +41,10 @@ func main() {
 	var otelService string
 	var mtlsCert, mtlsKey, mtlsCA string
 	var outputFormat string
+	var quiet bool
+	var verbose bool
+	var progress bool
+	var showVersion bool
 
 	// Add config file flag
 	flag.StringVar(&configFile, "config", "", "path to config file (YAML or JSON)")
@@ -60,7 +66,44 @@ func main() {
 	flag.BoolVar(&otelInsecure, "otel_insecure", true, "OTLP insecure (no TLS)")
 	flag.StringVar(&otelService, "otel_service", "", "OTEL service.name")
 	flag.StringVar(&outputFormat, "output_format", "", "output format (json, jsonl, csv)")
+	flag.BoolVar(&quiet, "quiet", false, "suppress progress output")
+	flag.BoolVar(&verbose, "verbose", false, "verbose logging")
+	flag.BoolVar(&progress, "progress", true, "show progress indicators")
+	flag.BoolVar(&showVersion, "version", false, "show version and exit")
+	
+	// Custom usage function
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "SPYDER (System for Probing and Yielding DNS-based Entity Relations)\n")
+		fmt.Fprintf(os.Stderr, "A high-performance network reconnaissance tool for mapping inter-domain relationships\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  %s -domains=domains.txt -concurrency=128\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -config=config.yaml -progress=false\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -domains=domains.txt -output_format=csv > output.csv\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+		fmt.Fprintf(os.Stderr, "  REDIS_ADDR       Redis server for deduplication\n")
+		fmt.Fprintf(os.Stderr, "  REDIS_QUEUE_ADDR Redis server for work queue\n")
+		fmt.Fprintf(os.Stderr, "  LOG_LEVEL        Log level (debug, info, warn, error)\n")
+		fmt.Fprintf(os.Stderr, "\nFor more information: https://github.com/gustycube/spyder\n")
+	}
+	
 	flag.Parse()
+
+	// Handle version flag
+	if showVersion {
+		fmt.Println("SPYDER Probe v1.0.0")
+		fmt.Println("Built with Go", strings.TrimPrefix(runtime.Version(), "go"))
+		fmt.Println("https://github.com/gustycube/spyder")
+		os.Exit(0)
+	}
+
+	// Show help if no domains file specified and no config file
+	if domainsFile == "" && configFile == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
 
 	ctx := context.Background()
 	log := logging.New()
