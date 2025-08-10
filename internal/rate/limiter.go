@@ -1,6 +1,7 @@
 package rate
 
 import (
+	"context"
 	"sync"
 	"time"
 	"golang.org/x/time/rate"
@@ -30,6 +31,6 @@ func (p *PerHost) Wait(host string) {
 	lim, ok := p.m[host]
 	if !ok { lim = rate.NewLimiter(rate.Limit(p.perSecond), p.burst); p.m[host] = lim }
 	p.mu.Unlock()
-	_ = lim.WaitN(nil, 1) // context nil treated as Background in current impl; if needed, pass a ctx
+	_ = lim.Wait(context.Background())
 	time.Sleep(0)
 }
