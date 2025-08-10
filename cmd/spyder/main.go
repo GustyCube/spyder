@@ -38,6 +38,7 @@ func main() {
 	var otelInsecure bool
 	var otelService string
 	var mtlsCert, mtlsKey, mtlsCA string
+	var outputFormat string
 
 	// Add config file flag
 	flag.StringVar(&configFile, "config", "", "path to config file (YAML or JSON)")
@@ -58,6 +59,7 @@ func main() {
 	flag.StringVar(&otelEndpoint, "otel_endpoint", "", "OTLP HTTP endpoint (host:port)")
 	flag.BoolVar(&otelInsecure, "otel_insecure", true, "OTLP insecure (no TLS)")
 	flag.StringVar(&otelService, "otel_service", "", "OTEL service.name")
+	flag.StringVar(&outputFormat, "output_format", "", "output format (json, jsonl, csv)")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -130,6 +132,9 @@ func main() {
 	}
 	if otelService != "" {
 		flags["otel_service"] = otelService
+	}
+	if outputFormat != "" {
+		flags["output_format"] = outputFormat
 	}
 	flags["otel_insecure"] = otelInsecure
 

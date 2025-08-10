@@ -27,8 +27,9 @@ type Config struct {
 	BatchFlushSec  int `yaml:"batch_flush_sec" json:"batch_flush_sec"`
 
 	// Output
-	Ingest   string `yaml:"ingest" json:"ingest"`
-	SpoolDir string `yaml:"spool_dir" json:"spool_dir"`
+	Ingest       string `yaml:"ingest" json:"ingest"`
+	SpoolDir     string `yaml:"spool_dir" json:"spool_dir"`
+	OutputFormat string `yaml:"output_format" json:"output_format"`
 
 	// mTLS
 	MTLSCert string `yaml:"mtls_cert" json:"mtls_cert"`
@@ -72,6 +73,9 @@ func (c *Config) SetDefaults() {
 	}
 	if c.SpoolDir == "" {
 		c.SpoolDir = "spool"
+	}
+	if c.OutputFormat == "" {
+		c.OutputFormat = "json"
 	}
 	if c.MetricsAddr == "" {
 		c.MetricsAddr = ":9090"
@@ -189,6 +193,9 @@ func (c *Config) MergeWithFlags(flags map[string]interface{}) {
 	}
 	if v, ok := flags["otel_service"].(string); ok && v != "" {
 		c.OTELService = v
+	}
+	if v, ok := flags["output_format"].(string); ok && v != "" {
+		c.OutputFormat = v
 	}
 }
 
