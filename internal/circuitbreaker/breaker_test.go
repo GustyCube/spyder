@@ -33,7 +33,12 @@ func TestCircuitBreaker_ClosedState(t *testing.T) {
 }
 
 func TestCircuitBreaker_OpensOnFailures(t *testing.T) {
-	cb := NewSimpleBreaker(3, 0.6, 100*time.Millisecond)
+	cb := New(&Config{
+		Threshold:    3,
+		FailureRatio: 0.6,
+		Timeout:      100 * time.Millisecond,
+		Interval:     time.Minute,
+	})
 
 	testErr := errors.New("test error")
 
