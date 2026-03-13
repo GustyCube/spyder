@@ -80,6 +80,11 @@ type StdoutWriter interface {
 	WriteBatch(batch Batch) error
 }
 
+// BatchStore persists batches to a database (e.g. MongoDB).
+type BatchStore interface {
+	WriteBatch(ctx context.Context, batch Batch) error
+}
+
 type Emitter struct {
 	ingest       string
 	probeID      string
@@ -89,11 +94,12 @@ type Emitter struct {
 	spoolDir     string
 	client       *http.Client
 	stdoutWriter StdoutWriter
+	store        BatchStore
 	mu           sync.Mutex
 	acc          Batch
 }
 
-func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Duration, spoolDir, mtlsCert, mtlsKey, mtlsCA string, sw StdoutWriter) (*Emitter, error) {
+func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Duration, spoolDir, mtlsCert, mtlsKey, mtlsCA string, sw StdoutWriter, st BatchStore) (*Emitter, error) {
 	tlsCfg := &tls.Config{}
 
 	if mtlsCert != "" || mtlsKey != "" {
@@ -125,6 +131,7 @@ func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Dur
 		batchMax: batchMax, flushEvery: flushEvery, spoolDir: spoolDir,
 		client:       &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}, Timeout: 20 * time.Second},
 		stdoutWriter: sw,
+		store:        st,
 		acc:          Batch{ProbeID: probeID, RunID: runID},
 	}, nil
 }
@@ -173,6 +180,12 @@ func (e *Emitter) flush(ctx context.Context, log *zap.SugaredLogger) {
 		if err := e.post(ctx, e.acc); err != nil {
 			log.Warnw("ingest failed, spooling", "err", err)
 			e.spool(e.acc, log)
+		}
+	}
+	// Persist to database if configured (runs alongside stdout/ingest)
+	if e.store != nil {
+		if err := e.store.WriteBatch(ctx, e.acc); err != nil {
+			log.Warnw("store write failed", "err", err)
 		}
 	}
 	e.acc = Batch{ProbeID: e.probeID, RunID: e.runID}

@@ -22,6 +22,7 @@ import (
 	"github.com/gustycube/spyder/internal/logging"
 	"github.com/gustycube/spyder/internal/metrics"
 	"github.com/gustycube/spyder/internal/output"
+	"github.com/gustycube/spyder/internal/store"
 	"github.com/gustycube/spyder/internal/probe"
 	"github.com/gustycube/spyder/internal/queue"
 	"github.com/gustycube/spyder/internal/telemetry"
@@ -77,9 +78,13 @@ func main() {
 	flag.BoolVar(&progress, "progress", true, "show progress indicators")
 	flag.BoolVar(&showVersion, "version", false, "show version and exit")
 	var enableDashboard bool
+	var mongoURI string
+	var mongoDB string
 	flag.BoolVar(&continuous, "continuous", false, "enable recursive crawling of discovered domains")
 	flag.Int64Var(&maxDomains, "max_domains", 0, "max discovered domains to crawl in continuous mode (0 = unlimited)")
 	flag.BoolVar(&enableDashboard, "dashboard", true, "enable live web dashboard on metrics port")
+	flag.StringVar(&mongoURI, "mongodb", "", "MongoDB connection URI (e.g. mongodb://localhost:27017)")
+	flag.StringVar(&mongoDB, "mongodb_db", "spyder", "MongoDB database name")
 	
 	// Custom usage function
 	flag.Usage = func() {
@@ -268,6 +273,18 @@ func main() {
 		stdoutWriter = ow
 	}
 
+	// Initialize database store (optional)
+	var batchStore emit.BatchStore
+	if mongoURI != "" {
+		ms, err := store.NewMongo(ctx, mongoURI, mongoDB, log)
+		if err != nil {
+			log.Fatal("mongodb init", "err", err)
+		}
+		defer ms.Close(context.Background())
+		batchStore = ms
+		log.Info("mongodb storage enabled", "uri", mongoURI, "db", mongoDB)
+	}
+
 	// Initialize emitter
 	emitterBatches := make(chan emit.Batch, 1024)
 	emitter, err := emit.NewEmitter(
@@ -281,6 +298,7 @@ func main() {
 		cfg.MTLSKey,
 		cfg.MTLSCA,
 		stdoutWriter,
+		batchStore,
 	)
 	if err != nil {
 		log.Fatal("emitter init", "err", err)
