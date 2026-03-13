@@ -1,335 +1,187 @@
-# SPYDER Probe (Project Arachnet) — Production Build
+# SPYDER
 
-[![Go Version](https://img.shields.io/badge/Go-1.22-blue?logo=go)](https://go.dev/)
+[![CI](https://github.com/gustycube/spyder/actions/workflows/ci.yml/badge.svg)](https://github.com/gustycube/spyder/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/GustyCube/spyder)](https://goreportcard.com/report/github.com/GustyCube/spyder)
-[![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)](Dockerfile)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/gustycube/spyder/pkgs/container/spyder)
+[![Docs](https://img.shields.io/badge/docs-vitepress-646CFF?logo=vitepress&logoColor=white)](https://gustycube.github.io/spyder/)
 [![License](https://img.shields.io/github/license/GustyCube/spyder)](LICENSE)
 [![Issues](https://img.shields.io/github/issues/GustyCube/spyder)](https://github.com/GustyCube/spyder/issues)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-enabled-blue?logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
+[![Prometheus](https://img.shields.io/badge/Prometheus-metrics-E6522C?logo=prometheus&logoColor=white)](https://prometheus.io/)
 
+**System for Probing and Yielding DNS-based Entity Relations** -- a distributed network reconnaissance tool for mapping inter-domain relationships through DNS resolution, TLS certificate chain analysis, and HTTP link extraction.
 
-
-**SPYDER** (System for Probing and Yielding DNS-based Entity Relations) is a high-performance, distributed network reconnaissance tool engineered for mapping inter-domain relationships through DNS resolution, TLS certificate chain analysis, and HTTP link extraction. Built with Go 1.22+, it provides enterprise-grade reliability with structured logging, Prometheus metrics, and policy-aware crawling that respects robots.txt and excludes sensitive TLDs.
-
-## 🏗️ Architecture Overview
+## Architecture
 
 ```mermaid
 graph TD
-    A[Domain Input<br/>domains.txt] --> B[SPYDER Core Engine]
-    
+    A[Seed Domains] --> B[SPYDER Probe]
+
     B --> C[DNS Resolver]
-    B --> D[TLS Inspector] 
+    B --> D[TLS Inspector]
     B --> E[HTTP Crawler]
-    B --> F[Rate Limiter]
-    
-    G[Redis<br/>Deduplication] <--> B
-    H[robots.txt<br/>LRU Cache] <--> E
-    
-    C --> I[Output/Ingest<br/>JSON/HTTP API]
+
+    C --> F[Discovery Sink]
+    D --> F
+    E --> F
+
+    F -->|continuous mode| B
+
+    G[Redis / LRU Cache] <--> B
+    H[robots.txt Cache] <--> E
+
+    C --> I[Batch Emitter]
     D --> I
     E --> I
-    
-    B --> J[Metrics & Logs<br/>Prometheus/Zap]
-    
-    style A fill:#e1f5fe
-    style B fill:#f3e5f5
-    style I fill:#e8f5e8
-    style J fill:#fff3e0
-    style G fill:#ffebee
-    style H fill:#f1f8e9
+
+    I --> J[Ingest API / stdout]
+    I --> K[Spool Directory]
+
+    B --> L[Prometheus Metrics]
+    B --> M[OpenTelemetry Traces]
 ```
 
----
+## Features
 
-## 🚀 Technical Capabilities
+- **Multi-protocol discovery** -- DNS (A/AAAA, CNAME, MX, NS), TLS certificate chains, HTTP link extraction
+- **Recursive crawling** -- discovered domains feed back into the work queue with `-continuous` mode
+- **Configurable concurrency** -- worker pool with per-host token bucket rate limiting
+- **Deduplication** -- in-memory LRU or Redis-backed for distributed deployments
+- **Policy compliance** -- RFC-compliant robots.txt parsing, configurable TLD exclusions
+- **Observability** -- Prometheus metrics, OpenTelemetry traces, structured Zap logging
+- **Fault tolerance** -- circuit breaker pattern, exponential backoff, disk-based spool for failed deliveries
+- **Secure transport** -- full mTLS support with CA bundle validation for ingest endpoints
+- **Cloud-native** -- distroless container images, Kubernetes health checks, Redis work queues
 
-### Core Engine
-- **Multi-Protocol Discovery**: DNS (A, AAAA, CNAME, MX, NS), TLS certificate chain analysis, HTTP link extraction
-- **Concurrent Processing**: Configurable worker pool (default: 256 goroutines) with per-host token bucket rate limiting
-- **Memory-Efficient Deduplication**: In-memory LRU cache with optional Redis backend for distributed deployments
-- **Policy Compliance**: RFC-compliant robots.txt parsing with configurable TLD exclusions (`gov`, `mil`, `int`)
+## Quick Start
 
-### Observability & Reliability  
-- **Structured Telemetry**: [Uber Zap](https://github.com/uber-go/zap) logging with configurable levels and OpenTelemetry traces
-- **Prometheus Metrics**: 15+ metrics covering throughput, latency, error rates, and resource utilization
-- **Circuit Breaker Pattern**: Exponential backoff with jitter, configurable retry policies
-- **Graceful Degradation**: Fault-tolerant batch emission with disk-based spooling for network failures
-
-### Deployment & Integration
-- **Cloud-Native**: Distroless container images, Kubernetes-ready health checks
-- **Secure Transport**: mTLS support for ingest endpoints with client certificate authentication  
-- **Horizontal Scaling**: Redis-backed work queues and deduplication for multi-instance deployments
-- **Enterprise Ready**: systemd service files, comprehensive monitoring, structured configuration
-
----
-
-## ⚡ Quick Start
-
-### Development Build
 ```bash
-# Prerequisites: Go 1.22+, ~256MB RAM, 1GB disk
-make build  # or: go build -o bin/spyder ./cmd/spyder
+# Build
+make build
 
-# Basic reconnaissance scan
+# Basic scan (single pass)
 echo -e "example.com\ngithub.com\ncloudflare.com" > domains.txt
 ./bin/spyder -domains=domains.txt -concurrency=64
+
+# Recursive crawling (discovers and follows new domains)
+./bin/spyder -domains=domains.txt -continuous -max_domains=10000
+
+# With Redis deduplication
+REDIS_ADDR=127.0.0.1:6379 ./bin/spyder -domains=domains.txt -concurrency=256
+
+# Docker
+docker compose up -d
 ```
 
-### Production Deployment
-```bash
-# High-throughput setup with Redis deduplication
-REDIS_ADDR=127.0.0.1:6379 ./bin/spyder \
-  -domains=domains.txt \
-  -ingest=https://ingest-api.internal/v1/batch \
-  -metrics_addr=:9090 \
-  -probe=prod-us-east-1 \
-  -concurrency=512 \
-  -batch_max_edges=50000 \
-  -mtls_cert=/etc/ssl/client.pem \
-  -mtls_key=/etc/ssl/client.key
-```
+## Configuration
 
-### Docker Deployment
-```bash
-docker build -t spyder-probe:latest .
-docker run --rm \
-  -v $(pwd)/domains.txt:/domains.txt \
-  -v $(pwd)/output:/spool \
-  -e REDIS_ADDR=redis:6379 \
-  spyder-probe:latest \
-  -domains=/domains.txt -metrics_addr=:9090
-```
+### CLI Flags
 
----
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-domains` | *required* | Path to newline-delimited domain list |
+| `-config` | | Path to YAML/JSON config file |
+| `-concurrency` | `256` | Worker goroutines |
+| `-continuous` | `false` | Enable recursive domain discovery |
+| `-max_domains` | `0` | Max discovered domains in continuous mode (0 = unlimited) |
+| `-ingest` | | HTTP(S) ingest endpoint (empty = stdout) |
+| `-probe` | `local-1` | Probe identifier |
+| `-run` | `run-{timestamp}` | Run identifier |
+| `-ua` | `SPYDERProbe/1.0` | User-Agent string |
+| `-exclude_tlds` | `gov,mil,int` | TLDs to skip |
+| `-metrics_addr` | `:9090` | Prometheus metrics address |
+| `-output_format` | `json` | Output format: json, jsonl, csv |
+| `-mtls_cert` | | Client certificate for mTLS |
+| `-mtls_key` | | Client key for mTLS |
+| `-mtls_ca` | | CA bundle for mTLS |
+| `-otel_endpoint` | | OTLP HTTP endpoint |
 
-## 🔧 Configuration Reference
+### Environment Variables
 
-### Runtime Parameters
+| Variable | Description |
+|----------|-------------|
+| `REDIS_ADDR` | Redis for deduplication |
+| `REDIS_QUEUE_ADDR` | Redis for distributed work queue |
+| `REDIS_QUEUE_KEY` | Queue key name (default: `spyder:queue`) |
+| `LOG_LEVEL` | Log level: debug, info, warn, error |
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `-domains` | `string` | **required** | Path to newline-delimited domain list |
-| `-concurrency` | `int` | `256` | Worker goroutines (tune to CPU cores × 64) |
-| `-probe` | `string` | `local-1` | Unique probe identifier for distributed setups |
-| `-run` | `string` | `run-{timestamp}` | Run identifier for batch correlation |
-| `-ua` | `string` | `SPYDERProbe/1.0` | HTTP User-Agent header |
+## Output Format
 
-### Performance & Rate Limiting
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `-batch_max_edges` | `int` | `10000` | Maximum edges per output batch |
-| `-batch_flush_sec` | `int` | `2` | Batch flush interval (seconds) |
-| `-exclude_tlds` | `string` | `gov,mil,int` | Comma-separated TLD exclusions |
-
-### Networking & Security
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `-ingest` | `string` | `stdout` | HTTP(S) ingest endpoint URL |
-| `-mtls_cert` | `string` | `""` | Client certificate for mTLS authentication |
-| `-mtls_key` | `string` | `""` | Client private key for mTLS |
-| `-mtls_ca` | `string` | `""` | CA certificate bundle for mTLS |
-
-### Observability
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `-metrics_addr` | `string` | `:9090` | Prometheus metrics bind address |
-| `-spool_dir` | `string` | `spool/` | Directory for failed batch persistence |
-| `REDIS_ADDR` | `env` | `""` | Redis server for distributed deduplication |
-| `REDIS_QUEUE_ADDR` | `env` | `""` | Redis server for work queue distribution |
-| `REDIS_QUEUE_KEY` | `env` | `spyder:queue` | Redis key for work queue |
-
-## 📊 Performance Metrics
-
-### Throughput Benchmarks
-```
-Hardware: 4-core CPU, 8GB RAM, SSD storage
-Redis: Local instance, default configuration
-
-Domains: 10,000 | Workers: 256 | Rate: ~847 domains/sec
-Domains: 50,000 | Workers: 512 | Rate: ~1,205 domains/sec  
-Edges Generated: ~2.3M edges/hour | Memory: ~512MB peak
-```
-
-### Output Data Schema
 ```json
 {
   "probe_id": "prod-us-east-1",
-  "run_id": "run-1704067200",
-  "batch_id": "b7f3c4e8",
-  "timestamp": "2024-01-01T10:30:00Z",
+  "run_id": "run-20240101",
   "nodes_domain": [
-    {
-      "host": "example.com",
-      "apex": "example.com", 
-      "first_seen": "2024-01-01T10:30:00Z",
-      "last_seen": "2024-01-01T10:30:00Z"
-    }
+    {"host": "example.com", "apex": "example.com", "first_seen": "...", "last_seen": "..."}
   ],
   "nodes_ip": [
-    {
-      "ip": "93.184.216.34",
-      "first_seen": "2024-01-01T10:30:00Z", 
-      "last_seen": "2024-01-01T10:30:00Z"
-    }
+    {"ip": "93.184.216.34", "first_seen": "...", "last_seen": "..."}
   ],
   "nodes_cert": [
-    {
-      "sha256": "a1b2c3...",
-      "subject": "CN=*.example.com",
-      "issuer": "DigiCert Inc",
-      "not_before": "2023-01-01T00:00:00Z",
-      "not_after": "2024-12-31T23:59:59Z"
-    }
+    {"spki_sha256": "a1b2c3...", "subject_cn": "*.example.com", "issuer_cn": "DigiCert", "not_before": "...", "not_after": "..."}
   ],
   "edges": [
-    {
-      "type": "RESOLVES_TO",
-      "source": "example.com", 
-      "target": "93.184.216.34",
-      "observed_at": "2024-01-01T10:30:00Z",
-      "probe_id": "prod-us-east-1",
-      "run_id": "run-1704067200"
-    }
+    {"type": "RESOLVES_TO", "source": "example.com", "target": "93.184.216.34", "observed_at": "...", "probe_id": "...", "run_id": "..."}
   ]
 }
 ```
 
-## 🔍 Monitoring & Observability
+### Edge Types
 
-### Key Prometheus Metrics
-```promql
-# Processing throughput
-spyder_tasks_total{status="ok"}
+| Type | Source | Target | Discovery Method |
+|------|--------|--------|-----------------|
+| `RESOLVES_TO` | Domain | IP | DNS A/AAAA |
+| `USES_NS` | Domain | Nameserver | DNS NS |
+| `ALIAS_OF` | Domain | Domain | DNS CNAME |
+| `USES_MX` | Domain | Mail server | DNS MX |
+| `LINKS_TO` | Domain | Domain | HTTP link extraction |
+| `USES_CERT` | Domain | SPKI hash | TLS handshake |
 
-# Edge discovery rate by type  
-rate(spyder_edges_total{type="RESOLVES_TO"}[5m])
+## Deployment
 
-# Error rates and latency
-spyder_http_request_duration_seconds{quantile="0.95"}
-rate(spyder_tasks_total{status="error"}[5m]) / rate(spyder_tasks_total[5m])
+### Docker Compose
 
-# Resource utilization
-spyder_active_workers
-spyder_redis_operations_total{operation="hit"}
-```
+The included `docker-compose.yml` starts SPYDER with Redis, Prometheus, and Grafana:
 
-### Log Analysis Examples
 ```bash
-# High-level operational stats
-journalctl -u spyder | jq 'select(.msg == "batch emitted") | .edges_count' | jq -s 'add'
-
-# DNS resolution performance  
-journalctl -u spyder | jq 'select(.component == "dns") | {host, duration_ms, record_count}'
-
-# Rate limiting events
-journalctl -u spyder | jq 'select(.msg | contains("rate limit"))'
+docker compose up -d        # start all services
+docker compose logs -f spyder  # follow probe logs
 ```
 
-## 🏭 Production Deployment Patterns
+### Distributed Mode
 
-### High-Availability Setup
+Use Redis work queues for multi-instance deployments:
+
 ```bash
-# Load balancer + multiple probe instances
-# Instance 1: US-East
-REDIS_ADDR=redis-cluster:6379 ./bin/spyder \
-  -probe=us-east-1 -concurrency=256 \
-  -domains=/shared/domains-shard-1.txt
+# Seed the queue
+./bin/seed -redis=redis:6379 -domains=domains.txt
 
-# Instance 2: US-West  
-REDIS_ADDR=redis-cluster:6379 ./bin/spyder \
-  -probe=us-west-1 -concurrency=256 \
-  -domains=/shared/domains-shard-2.txt
+# Run multiple probes
+REDIS_QUEUE_ADDR=redis:6379 ./bin/spyder -probe=probe-1 -continuous
+REDIS_QUEUE_ADDR=redis:6379 ./bin/spyder -probe=probe-2 -continuous
 ```
 
-### Kubernetes Deployment
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: spyder-probe
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: spyder-probe
-  template:
-    spec:
-      containers:
-      - name: spyder
-        image: spyder-probe:v1.0.0
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi" 
-            cpu: "2000m"
-        env:
-        - name: REDIS_ADDR
-          value: "redis-service:6379"
-```
+## Documentation
 
-## 🧰 Integration Examples
+Full documentation at **[gustycube.github.io/spyder](https://gustycube.github.io/spyder/)**
 
-### Kafka Integration
 ```bash
-# Stream edges to Kafka topic
-./bin/spyder -domains=domains.txt \
-  -ingest=http://kafka-connect:8080/topics/network-edges
-```
-
-### Elasticsearch Ingestion  
-```bash
-# Direct to Elasticsearch via HTTP
-./bin/spyder -domains=domains.txt \
-  -ingest=https://elasticsearch:9200/network-intel/_bulk \
-  -mtls_cert=/certs/elastic-client.pem
-```
-
-### Custom Processing Pipeline
-```bash
-# Named pipes for real-time processing
-mkfifo /tmp/spyder-stream
-./bin/spyder -domains=domains.txt > /tmp/spyder-stream &
-cat /tmp/spyder-stream | jq '.edges[]' | custom-processor
-```
-
----
-
-## 📚 Documentation
-
-- **[📖 Full Documentation](https://gustycube.github.io/spyder/)** - Complete documentation site
-- **[🚀 Installation Guide](https://gustycube.github.io/spyder/guide/installation)** - Production setup and deployment  
-- **[⚙️ Operations Manual](https://gustycube.github.io/spyder/ops/)** - Monitoring, troubleshooting, performance tuning
-- **[🏗️ Architecture Deep-Dive](https://gustycube.github.io/spyder/architecture/overview)** - Technical specifications and design decisions
-- **[🔧 Component Reference](https://gustycube.github.io/spyder/components/)** - Detailed component documentation
-- **[📡 API Reference](https://gustycube.github.io/spyder/api/overview)** - Complete API documentation
-
-### Local Development
-```bash
+# Run docs locally
 cd docs && npm install && npm run docs:dev
-# → http://localhost:5173
 ```
 
----
+## Contributing
 
-## 🤝 Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md). Quick setup:
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and contribution guidelines.
-
-**Quick Development Setup:**
 ```bash
 git clone https://github.com/gustycube/spyder.git
 cd spyder
 make lint test build
-./bin/spyder -domains=configs/test-domains.txt
 ```
 
----
+## License
 
-## 📄 License
-
-Licensed under the MIT License. See [LICENSE](LICENSE) for details.
+[MIT](LICENSE)
