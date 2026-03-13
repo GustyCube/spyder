@@ -234,7 +234,7 @@ func main() {
 	var d dedup.Interface
 	var redisHealthCheck func() error
 	if cfg.RedisAddr != "" {
-		rd, err := dedup.NewRedis(cfg.RedisAddr, 24*time.Hour)
+		rd, err := dedup.NewRedis(cfg.RedisAddr, 24*time.Hour, log)
 		if err != nil {
 			log.Fatal("redis init", "err", err)
 		}
