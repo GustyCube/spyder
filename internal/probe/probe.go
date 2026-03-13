@@ -98,7 +98,10 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 		p.flush(nodesD, nodesIP, nodesC, edges)
 		return
 	}
-	rd, _ := p.rob.Get(ctx, host)
+	rd, err := p.rob.Get(ctx, host)
+	if err != nil {
+		p.log.Debugw("robots.txt fetch", "host", host, "err", err)
+	}
 	if !robots.Allowed(rd, p.ua, "/") {
 		metrics.RobotsBlocks.Inc()
 		p.flush(nodesD, nodesIP, nodesC, edges)
@@ -112,14 +115,22 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 	root := &url.URL{Scheme: "https", Host: host, Path: "/"}
 	httpCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(httpCtx, "GET", root.String(), nil)
+	req, err := http.NewRequestWithContext(httpCtx, "GET", root.String(), nil)
+	if err != nil {
+		p.log.Warnw("create request", "host", host, "err", err)
+		p.flush(nodesD, nodesIP, nodesC, edges)
+		return
+	}
 	req.Header.Set("User-Agent", p.ua)
 	resp, err := p.hc.Do(req)
 	if err == nil {
 		ct := strings.ToLower(resp.Header.Get("Content-Type"))
 		if strings.Contains(ct, "text/html") && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			body := io.LimitReader(resp.Body, 512*1024)
-			links, _ := extract.ParseLinks(root, body)
+			links, err := extract.ParseLinks(root, body)
+			if err != nil {
+				p.log.Debugw("parse links", "host", host, "err", err)
+			}
 			outs := extract.ExternalDomains(host, links)
 			for _, h := range outs {
 				if !p.dedup.Seen("domain|"+h) { nodesD = append(nodesD, emit.NodeDomain{Host: h, Apex: extract.Apex(h), FirstSeen: now, LastSeen: now}) }
