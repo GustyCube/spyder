@@ -6,12 +6,12 @@ This guide covers building SPYDER from source code, including development enviro
 
 ### Go Installation
 
-**Install Go 1.22 or later:**
+**Install Go 1.23 or later:**
 
 ```bash
 # Linux
-wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.23.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.23.0.linux-amd64.tar.gz
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
 
@@ -253,7 +253,7 @@ clean:
 The project uses a multi-stage build:
 
 ```dockerfile
-FROM golang:1.22 AS build
+FROM golang:1.23 AS build
 WORKDIR /app
 COPY . .
 RUN go mod download
@@ -412,7 +412,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v3
       with:
-        go-version: '1.22'
+        go-version: '1.23'
     
     - name: Download dependencies
       run: go mod download

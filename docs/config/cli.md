@@ -84,6 +84,66 @@ Identifier for the current run/session.
 - Useful for batch processing analysis
 - Included in all emitted data
 
+## Crawling Mode
+
+### `-continuous`
+
+Enable recursive domain discovery. When enabled, newly discovered domains (from DNS records, TLS certificates, and HTTP links) are fed back into the work queue for further probing.
+
+```bash
+# Single pass (default)
+./bin/spyder -domains=domains.txt
+
+# Recursive crawling
+./bin/spyder -domains=domains.txt -continuous
+```
+
+**Default:** `false`
+
+**Behavior:**
+- Seed domains from `-domains` file are probed first
+- Discovered domains (NS, CNAME, MX, HTTP links) are queued for probing
+- Crawling continues until no new domains are discovered or `-max_domains` is reached
+- Deduplication prevents re-probing already-visited domains
+
+### `-max_domains`
+
+Maximum number of discovered domains to probe in continuous mode. Set to `0` for unlimited.
+
+```bash
+# Limit to 10,000 discovered domains
+./bin/spyder -domains=domains.txt -continuous -max_domains=10000
+
+# Unlimited discovery
+./bin/spyder -domains=domains.txt -continuous -max_domains=0
+```
+
+**Default:** `0` (unlimited)
+
+**Notes:**
+- Only applies when `-continuous` is enabled
+- Counts only newly discovered domains, not seed domains
+- When the limit is reached, no new domains are queued but in-flight work completes
+
+## Output
+
+### `-output_format`
+
+Output format for batch data written to stdout.
+
+```bash
+-output_format=json    # Pretty-printed JSON (default)
+-output_format=jsonl   # JSON Lines (one object per line)
+-output_format=csv     # CSV format
+```
+
+**Default:** `json`
+
+**Notes:**
+- Only affects stdout output (not ingest API delivery)
+- CSV format outputs edge data only (source, target, type, timestamps)
+- JSONL is recommended for piping to other tools
+
 ## Performance Tuning
 
 ### `-concurrency`
@@ -333,6 +393,18 @@ Service name for OpenTelemetry traces.
   -metrics_addr=:9090
 ```
 
+### Recursive Crawling
+
+```bash
+./bin/spyder \
+  -domains=seed-domains.txt \
+  -continuous \
+  -max_domains=50000 \
+  -concurrency=256 \
+  -probe=crawler-01 \
+  -metrics_addr=:9090
+```
+
 ### Distributed Setup with Redis
 
 ```bash
@@ -344,6 +416,8 @@ export REDIS_QUEUE_KEY=spyder:production:queue
 ./bin/spyder \
   -ingest=https://distributed-ingest.com/v1/batch \
   -probe=dist-worker-$(hostname) \
+  -continuous \
+  -max_domains=100000 \
   -concurrency=256 \
   -metrics_addr=:9090 \
   -otel_endpoint=http://jaeger.monitoring.svc.cluster.local:4318 \
