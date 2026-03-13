@@ -254,7 +254,7 @@ func main() {
 
 	// Initialize emitter
 	batches := make(chan emit.Batch, 1024)
-	emitter := emit.NewEmitter(
+	emitter, err := emit.NewEmitter(
 		cfg.Ingest,
 		cfg.Probe,
 		cfg.Run,
@@ -265,6 +265,9 @@ func main() {
 		cfg.MTLSKey,
 		cfg.MTLSCA,
 	)
+	if err != nil {
+		log.Fatal("emitter init", "err", err)
+	}
 	go emitter.Run(ctx, batches, log)
 
 	// Initialize task queue

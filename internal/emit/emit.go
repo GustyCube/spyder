@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -68,21 +69,39 @@ type Emitter struct {
 	acc       Batch
 }
 
-func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Duration, spoolDir, mtlsCert, mtlsKey, mtlsCA string) *Emitter {
-	tr := &http.Transport{TLSClientConfig: &tls.Config{}}
-	if mtlsCert != "" && mtlsKey != "" {
-		cert, err := tls.LoadX509KeyPair(mtlsCert, mtlsKey)
-		if err == nil {
-			tr.TLSClientConfig.Certificates = []tls.Certificate{cert}
+func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Duration, spoolDir, mtlsCert, mtlsKey, mtlsCA string) (*Emitter, error) {
+	tlsCfg := &tls.Config{}
+
+	if mtlsCert != "" || mtlsKey != "" {
+		if mtlsCert == "" || mtlsKey == "" {
+			return nil, fmt.Errorf("both mtls_cert and mtls_key must be provided together")
 		}
+		cert, err := tls.LoadX509KeyPair(mtlsCert, mtlsKey)
+		if err != nil {
+			return nil, fmt.Errorf("loading mTLS keypair: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
+
+	if mtlsCA != "" {
+		caPEM, err := os.ReadFile(mtlsCA)
+		if err != nil {
+			return nil, fmt.Errorf("reading mTLS CA bundle: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("no valid certificates found in CA bundle: %s", mtlsCA)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
 	_ = os.MkdirAll(spoolDir, 0o755)
 	return &Emitter{
 		ingest: ingest, probeID: probeID, runID: runID,
 		batchMax: batchMax, flushEvery: flushEvery, spoolDir: spoolDir,
-		client: &http.Client{Transport: tr, Timeout: 20 * time.Second},
-		acc: Batch{ProbeID: probeID, RunID: runID},
-	}
+		client: &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}, Timeout: 20 * time.Second},
+		acc:    Batch{ProbeID: probeID, RunID: runID},
+	}, nil
 }
 
 func (e *Emitter) Run(ctx context.Context, in <-chan Batch, log *zap.SugaredLogger) {

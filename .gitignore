@@ -15,5 +15,5 @@ spool/
 coverage.txt
 docs/node_modules
 # Built binaries
-spyder
-seed
+/spyder
+/seed
