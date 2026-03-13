@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SPYDER Dashboard</title>
-<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
   :root {
     --bg: #0a0e17;
@@ -21,9 +20,7 @@
     --red: #ef4444;
     --white: #f8fafc;
   }
-
   * { margin: 0; padding: 0; box-sizing: border-box; }
-
   body {
     font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
     background: var(--bg);
@@ -31,7 +28,6 @@
     overflow: hidden;
     height: 100vh;
   }
-
   header {
     display: flex;
     align-items: center;
@@ -40,239 +36,78 @@
     background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
-
-  header h1 {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--accent);
-    letter-spacing: 2px;
-  }
-
+  header h1 { font-size: 16px; font-weight: 600; color: var(--accent); letter-spacing: 2px; }
   #connection-status {
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 12px;
-    background: var(--red);
-    color: #fff;
-    transition: background 0.3s;
+    font-size: 11px; padding: 4px 10px; border-radius: 12px;
+    background: var(--red); color: #fff; transition: background 0.3s;
   }
-
-  #connection-status.connected {
-    background: var(--green);
-  }
-
+  #connection-status.connected { background: var(--green); }
   .stats-bar {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 1px;
-    background: var(--border);
-    border-bottom: 1px solid var(--border);
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 1px; background: var(--border); border-bottom: 1px solid var(--border);
   }
-
-  .stat {
-    background: var(--surface);
-    padding: 14px 20px;
-    text-align: center;
-  }
-
-  .stat-value {
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--accent);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .stat-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--text-dim);
-    margin-top: 4px;
-  }
-
-  .main {
-    display: grid;
-    grid-template-columns: 380px 1fr;
-    height: calc(100vh - 110px);
-  }
-
-  .feed-panel {
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
+  .stat { background: var(--surface); padding: 14px 20px; text-align: center; }
+  .stat-value { font-size: 28px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 4px; }
+  .main { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 110px); }
+  .feed-panel { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
   .panel-header {
-    padding: 10px 16px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--text-dim);
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    padding: 10px 16px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 1.5px; color: var(--text-dim); background: var(--surface);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
-
-  .feed {
-    overflow-y: auto;
-    flex: 1;
-    padding: 0;
-  }
-
+  .feed { overflow-y: auto; flex: 1; padding: 0; }
   .feed::-webkit-scrollbar { width: 6px; }
   .feed::-webkit-scrollbar-track { background: var(--bg); }
   .feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
   .feed-item {
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-    line-height: 1.5;
-    animation: fadeIn 0.3s ease;
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+    font-size: 12px; line-height: 1.5; animation: fadeIn 0.3s ease;
   }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .feed-domain {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  .feed-time {
-    color: var(--text-dim);
-    font-size: 10px;
-    float: right;
-  }
-
-  .feed-edges {
-    margin-top: 4px;
-    padding-left: 12px;
-  }
-
-  .feed-edge {
-    color: var(--text-dim);
-    font-size: 11px;
-  }
-
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .feed-domain { color: var(--accent); font-weight: 600; }
+  .feed-time { color: var(--text-dim); font-size: 10px; float: right; }
+  .feed-edges { margin-top: 4px; padding-left: 12px; }
+  .feed-edge { color: var(--text-dim); font-size: 11px; }
   .edge-badge {
-    display: inline-block;
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    margin-right: 4px;
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.5px; margin-right: 4px;
   }
-
   .edge-RESOLVES_TO { background: rgba(34,197,94,0.15); color: var(--green); }
   .edge-USES_NS { background: rgba(59,130,246,0.15); color: var(--blue); }
   .edge-ALIAS_OF { background: rgba(234,179,8,0.15); color: var(--yellow); }
   .edge-USES_MX { background: rgba(168,85,247,0.15); color: var(--purple); }
   .edge-LINKS_TO { background: rgba(6,182,212,0.15); color: var(--cyan); }
   .edge-USES_CERT { background: rgba(248,250,252,0.15); color: var(--white); }
-
-  .graph-panel {
-    position: relative;
-    background: var(--bg);
-  }
-
-  #graph {
-    width: 100%;
-    height: 100%;
-  }
-
-  .graph-controls {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    display: flex;
-    gap: 6px;
-    z-index: 10;
-  }
-
+  .graph-panel { position: relative; background: var(--bg); }
+  #graph-canvas { width: 100%; height: 100%; display: block; }
+  .graph-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; z-index: 10; }
   .graph-btn {
-    padding: 6px 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    font-size: 11px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: inherit;
+    padding: 6px 12px; background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-dim); font-size: 11px; border-radius: 4px; cursor: pointer; font-family: inherit;
   }
-
-  .graph-btn:hover {
-    background: var(--border);
-    color: var(--text);
-  }
-
+  .graph-btn:hover { background: var(--border); color: var(--text); }
   .legend {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
-    display: flex;
-    gap: 12px;
-    font-size: 10px;
-    color: var(--text-dim);
-    z-index: 10;
+    position: absolute; bottom: 10px; left: 10px; display: flex;
+    gap: 12px; font-size: 10px; color: var(--text-dim); z-index: 10;
   }
-
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .legend-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-
-  .empty-state {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--text-dim);
-    font-size: 13px;
-  }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); font-size: 13px; }
 </style>
 </head>
 <body>
-
 <header>
   <h1>SPYDER</h1>
   <span id="connection-status">DISCONNECTED</span>
 </header>
-
 <div class="stats-bar">
-  <div class="stat">
-    <div class="stat-value" id="stat-domains">0</div>
-    <div class="stat-label">Domains</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value" id="stat-edges">0</div>
-    <div class="stat-label">Edges</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value" id="stat-ips">0</div>
-    <div class="stat-label">IPs</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value" id="stat-certs">0</div>
-    <div class="stat-label">Certs</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value" id="stat-rate">0.0</div>
-    <div class="stat-label">Domains/sec</div>
-  </div>
+  <div class="stat"><div class="stat-value" id="stat-domains">0</div><div class="stat-label">Domains</div></div>
+  <div class="stat"><div class="stat-value" id="stat-edges">0</div><div class="stat-label">Edges</div></div>
+  <div class="stat"><div class="stat-value" id="stat-ips">0</div><div class="stat-label">IPs</div></div>
+  <div class="stat"><div class="stat-value" id="stat-certs">0</div><div class="stat-label">Certs</div></div>
+  <div class="stat"><div class="stat-value" id="stat-rate">0.0</div><div class="stat-label">Domains/sec</div></div>
 </div>
-
 <div class="main">
   <div class="feed-panel">
     <div class="panel-header">Activity Feed</div>
@@ -280,14 +115,13 @@
       <div class="empty-state" id="feed-empty">Waiting for events...</div>
     </div>
   </div>
-
   <div class="graph-panel">
     <div class="graph-controls">
-      <button class="graph-btn" onclick="network.fit()">Fit</button>
-      <button class="graph-btn" onclick="togglePhysics()">Physics</button>
-      <button class="graph-btn" onclick="clearGraph()">Clear</button>
+      <button class="graph-btn" onclick="graphFit()">Fit</button>
+      <button class="graph-btn" onclick="graphTogglePhysics()">Physics</button>
+      <button class="graph-btn" onclick="graphClear()">Clear</button>
     </div>
-    <div id="graph"></div>
+    <canvas id="graph-canvas"></canvas>
     <div class="legend">
       <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div> Domain</div>
       <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> IP</div>
@@ -296,126 +130,288 @@
     </div>
   </div>
 </div>
-
 <script>
-const MAX_FEED = 200;
-const MAX_NODES = 500;
-const EDGE_COLORS = {
-  RESOLVES_TO: '#22c55e',
-  USES_NS: '#3b82f6',
-  ALIAS_OF: '#eab308',
-  USES_MX: '#a855f7',
-  LINKS_TO: '#06b6d4',
-  USES_CERT: '#94a3b8'
+var MAX_FEED = 200;
+var MAX_NODES = 500;
+var EDGE_COLORS = {
+  RESOLVES_TO: '#22c55e', USES_NS: '#3b82f6', ALIAS_OF: '#eab308',
+  USES_MX: '#a855f7', LINKS_TO: '#06b6d4', USES_CERT: '#94a3b8'
 };
-
-const EDGE_LABELS = {
-  RESOLVES_TO: 'A',
-  USES_NS: 'NS',
-  ALIAS_OF: 'CNAME',
-  USES_MX: 'MX',
-  LINKS_TO: 'LINK',
-  USES_CERT: 'TLS'
+var EDGE_LABELS = {
+  RESOLVES_TO: 'A', USES_NS: 'NS', ALIAS_OF: 'CNAME',
+  USES_MX: 'MX', LINKS_TO: 'LINK', USES_CERT: 'TLS'
 };
+var NODE_COLORS = { domain: '#06b6d4', ip: '#22c55e', cert: '#a855f7', ns: '#3b82f6' };
+var NODE_SIZES = { domain: 6, ip: 4, cert: 4, ns: 4 };
 
-// vis-network setup
-const nodes = new vis.DataSet();
-const edges = new vis.DataSet();
-const container = document.getElementById('graph');
+// ---- Force-directed graph (zero dependencies) ----
+var gNodes = {};   // id -> {x, y, vx, vy, label, type, color, size}
+var gEdges = [];   // [{from, to, type, color}]
+var gEdgeSet = {}; // dedup
+var gNodeOrder = []; // for pruning
+var gPhysics = true;
+var gCamX = 0, gCamY = 0, gZoom = 1;
+var gDrag = null, gDragNode = null, gPan = null;
 
-const network = new vis.Network(container, { nodes, edges }, {
-  physics: {
-    solver: 'forceAtlas2Based',
-    forceAtlas2Based: {
-      gravitationalConstant: -30,
-      centralGravity: 0.005,
-      springLength: 100,
-      springConstant: 0.04,
-      damping: 0.4
-    },
-    stabilization: { iterations: 50 }
-  },
-  nodes: {
-    font: { color: '#e5e7eb', size: 10, face: 'monospace' },
-    borderWidth: 0,
-    shadow: false
-  },
-  edges: {
-    width: 1,
-    smooth: { type: 'continuous' },
-    font: { color: '#6b7280', size: 8, strokeWidth: 0, face: 'monospace' },
-    arrows: { to: { enabled: true, scaleFactor: 0.4 } }
-  },
-  interaction: {
-    hover: true,
-    tooltipDelay: 100
-  }
-});
+var canvas = document.getElementById('graph-canvas');
+var ctx = canvas.getContext('2d');
 
-let physicsEnabled = true;
-
-function togglePhysics() {
-  physicsEnabled = !physicsEnabled;
-  network.setOptions({ physics: { enabled: physicsEnabled } });
+function resizeCanvas() {
+  var r = canvas.parentElement.getBoundingClientRect();
+  canvas.width = r.width * devicePixelRatio;
+  canvas.height = r.height * devicePixelRatio;
+  canvas.style.width = r.width + 'px';
+  canvas.style.height = r.height + 'px';
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
-
-function clearGraph() {
-  nodes.clear();
-  edges.clear();
-  nodeSet.clear();
-}
-
-// Track which nodes exist
-const nodeSet = new Set();
-const nodeAge = [];
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
 
 function addNode(id, label, type) {
-  if (nodeSet.has(id)) return;
-  nodeSet.add(id);
-  nodeAge.push([id, Date.now()]);
-
-  var color, shape, size;
-  switch (type) {
-    case 'domain':
-      color = '#06b6d4'; shape = 'dot'; size = 12; break;
-    case 'ip':
-      color = '#22c55e'; shape = 'dot'; size = 8; break;
-    case 'cert':
-      color = '#a855f7'; shape = 'diamond'; size = 8; break;
-    case 'ns':
-      color = '#3b82f6'; shape = 'square'; size = 8; break;
-    default:
-      color = '#6b7280'; shape = 'dot'; size = 8;
-  }
-
-  nodes.add({
-    id: id, label: label,
-    color: { background: color, border: color, highlight: { background: color, border: '#fff' } },
-    shape: shape, size: size
-  });
-
+  if (gNodes[id]) return;
+  var cx = canvas.width / devicePixelRatio / 2;
+  var cy = canvas.height / devicePixelRatio / 2;
+  gNodes[id] = {
+    x: cx + (Math.random() - 0.5) * 200,
+    y: cy + (Math.random() - 0.5) * 200,
+    vx: 0, vy: 0,
+    label: label, type: type,
+    color: NODE_COLORS[type] || '#6b7280',
+    size: NODE_SIZES[type] || 4
+  };
+  gNodeOrder.push(id);
   pruneGraph();
 }
 
 function addEdge(from, to, type) {
-  var edgeId = from + '|' + type + '|' + to;
-  if (edges.get(edgeId)) return;
-  edges.add({
-    id: edgeId, from: from, to: to,
-    color: { color: EDGE_COLORS[type] || '#6b7280', opacity: 0.6 },
-    label: EDGE_LABELS[type] || type
-  });
+  var key = from + '|' + type + '|' + to;
+  if (gEdgeSet[key]) return;
+  gEdgeSet[key] = true;
+  gEdges.push({ from: from, to: to, type: type, color: EDGE_COLORS[type] || '#6b7280' });
 }
 
 function pruneGraph() {
-  while (nodeAge.length > MAX_NODES) {
-    var old = nodeAge.shift();
-    nodes.remove(old[0]);
-    nodeSet.delete(old[0]);
+  while (gNodeOrder.length > MAX_NODES) {
+    var old = gNodeOrder.shift();
+    delete gNodes[old];
+    gEdges = gEdges.filter(function(e) { return e.from !== old && e.to !== old; });
+    // Rebuild edge set
+    gEdgeSet = {};
+    for (var i = 0; i < gEdges.length; i++) {
+      gEdgeSet[gEdges[i].from + '|' + gEdges[i].type + '|' + gEdges[i].to] = true;
+    }
   }
 }
 
-// Feed
+function graphClear() {
+  gNodes = {}; gEdges = []; gEdgeSet = {}; gNodeOrder = [];
+}
+
+function graphFit() {
+  var ids = Object.keys(gNodes);
+  if (ids.length === 0) return;
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (var i = 0; i < ids.length; i++) {
+    var n = gNodes[ids[i]];
+    if (n.x < minX) minX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y > maxY) maxY = n.y;
+  }
+  var w = canvas.width / devicePixelRatio;
+  var h = canvas.height / devicePixelRatio;
+  var pad = 60;
+  var sx = (w - pad * 2) / Math.max(maxX - minX, 1);
+  var sy = (h - pad * 2) / Math.max(maxY - minY, 1);
+  gZoom = Math.min(sx, sy, 3);
+  gCamX = (minX + maxX) / 2;
+  gCamY = (minY + maxY) / 2;
+}
+
+function graphTogglePhysics() { gPhysics = !gPhysics; }
+
+// Physics simulation
+function simulate() {
+  if (!gPhysics) return;
+  var ids = Object.keys(gNodes);
+  var len = ids.length;
+  if (len === 0) return;
+
+  // Repulsion between all nodes
+  for (var i = 0; i < len; i++) {
+    var a = gNodes[ids[i]];
+    for (var j = i + 1; j < len; j++) {
+      var b = gNodes[ids[j]];
+      var dx = b.x - a.x;
+      var dy = b.y - a.y;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var force = -200 / (dist * dist);
+      var fx = dx / dist * force;
+      var fy = dy / dist * force;
+      a.vx -= fx; a.vy -= fy;
+      b.vx += fx; b.vy += fy;
+    }
+  }
+
+  // Attraction along edges
+  for (var e = 0; e < gEdges.length; e++) {
+    var edge = gEdges[e];
+    var a = gNodes[edge.from];
+    var b = gNodes[edge.to];
+    if (!a || !b) continue;
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    var force = (dist - 80) * 0.005;
+    var fx = dx / dist * force;
+    var fy = dy / dist * force;
+    a.vx += fx; a.vy += fy;
+    b.vx -= fx; b.vy -= fy;
+  }
+
+  // Center gravity
+  var cx = canvas.width / devicePixelRatio / 2;
+  var cy = canvas.height / devicePixelRatio / 2;
+  for (var i = 0; i < len; i++) {
+    var n = gNodes[ids[i]];
+    n.vx += (cx - n.x) * 0.0003;
+    n.vy += (cy - n.y) * 0.0003;
+    // Damping
+    n.vx *= 0.85;
+    n.vy *= 0.85;
+    // Skip dragged node
+    if (gDragNode && ids[i] === gDragNode) continue;
+    n.x += n.vx;
+    n.y += n.vy;
+  }
+}
+
+// Render
+function render() {
+  var w = canvas.width / devicePixelRatio;
+  var h = canvas.height / devicePixelRatio;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.scale(gZoom, gZoom);
+  ctx.translate(-gCamX, -gCamY);
+
+  // Draw edges
+  ctx.lineWidth = 0.5 / gZoom;
+  for (var i = 0; i < gEdges.length; i++) {
+    var e = gEdges[i];
+    var a = gNodes[e.from];
+    var b = gNodes[e.to];
+    if (!a || !b) continue;
+    ctx.strokeStyle = e.color;
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Draw nodes
+  var ids = Object.keys(gNodes);
+  for (var i = 0; i < ids.length; i++) {
+    var n = gNodes[ids[i]];
+    var r = n.size / gZoom;
+    ctx.fillStyle = n.color;
+    ctx.beginPath();
+    if (n.type === 'ns') {
+      ctx.rect(n.x - r, n.y - r, r * 2, r * 2);
+    } else if (n.type === 'cert') {
+      ctx.moveTo(n.x, n.y - r * 1.3);
+      ctx.lineTo(n.x + r * 1.3, n.y);
+      ctx.lineTo(n.x, n.y + r * 1.3);
+      ctx.lineTo(n.x - r * 1.3, n.y);
+      ctx.closePath();
+    } else {
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+
+    // Labels (only when zoomed in enough)
+    if (gZoom > 0.4) {
+      ctx.fillStyle = '#e5e7eb';
+      ctx.font = Math.max(8, 10 / gZoom) + 'px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(n.label.length > 25 ? n.label.substring(0, 22) + '...' : n.label, n.x, n.y + r + 12 / gZoom);
+    }
+  }
+
+  ctx.restore();
+}
+
+function tick() {
+  simulate();
+  render();
+  requestAnimationFrame(tick);
+}
+tick();
+
+// Mouse interaction
+function screenToWorld(sx, sy) {
+  var w = canvas.width / devicePixelRatio;
+  var h = canvas.height / devicePixelRatio;
+  return {
+    x: (sx - w / 2) / gZoom + gCamX,
+    y: (sy - h / 2) / gZoom + gCamY
+  };
+}
+
+function findNode(wx, wy) {
+  var ids = Object.keys(gNodes);
+  for (var i = ids.length - 1; i >= 0; i--) {
+    var n = gNodes[ids[i]];
+    var r = Math.max(n.size / gZoom, 8);
+    var dx = n.x - wx, dy = n.y - wy;
+    if (dx * dx + dy * dy < r * r * 4) return ids[i];
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', function(ev) {
+  var rect = canvas.getBoundingClientRect();
+  var sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+  var wp = screenToWorld(sx, sy);
+  var nid = findNode(wp.x, wp.y);
+  if (nid) {
+    gDragNode = nid;
+  } else {
+    gPan = { sx: sx, sy: sy, cx: gCamX, cy: gCamY };
+  }
+});
+
+canvas.addEventListener('mousemove', function(ev) {
+  var rect = canvas.getBoundingClientRect();
+  var sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+  if (gDragNode && gNodes[gDragNode]) {
+    var wp = screenToWorld(sx, sy);
+    gNodes[gDragNode].x = wp.x;
+    gNodes[gDragNode].y = wp.y;
+    gNodes[gDragNode].vx = 0;
+    gNodes[gDragNode].vy = 0;
+  } else if (gPan) {
+    var dx = (sx - gPan.sx) / gZoom;
+    var dy = (sy - gPan.sy) / gZoom;
+    gCamX = gPan.cx - dx;
+    gCamY = gPan.cy - dy;
+  }
+});
+
+canvas.addEventListener('mouseup', function() { gDragNode = null; gPan = null; });
+canvas.addEventListener('mouseleave', function() { gDragNode = null; gPan = null; });
+
+canvas.addEventListener('wheel', function(ev) {
+  ev.preventDefault();
+  var factor = ev.deltaY > 0 ? 0.9 : 1.1;
+  gZoom = Math.max(0.05, Math.min(5, gZoom * factor));
+}, { passive: false });
+
+// ---- Feed ----
 var feed = document.getElementById('feed');
 var feedEmpty = document.getElementById('feed-empty');
 var feedCount = 0;
@@ -429,39 +425,28 @@ function createBadge(edgeType) {
 
 function addFeedItem(batch) {
   if (feedEmpty && feedEmpty.parentNode) feedEmpty.parentNode.removeChild(feedEmpty);
-
-  // Group edges by source
   var bySource = {};
   var sources = [];
   for (var i = 0; i < batch.edges.length; i++) {
     var e = batch.edges[i];
-    if (!bySource[e.source]) {
-      bySource[e.source] = [];
-      sources.push(e.source);
-    }
+    if (!bySource[e.source]) { bySource[e.source] = []; sources.push(e.source); }
     bySource[e.source].push(e);
   }
-
   for (var s = 0; s < sources.length; s++) {
     var source = sources[s];
     var srcEdges = bySource[source];
-
     var item = document.createElement('div');
     item.className = 'feed-item';
-
     var timeSpan = document.createElement('span');
     timeSpan.className = 'feed-time';
     timeSpan.textContent = new Date(batch.timestamp).toLocaleTimeString();
     item.appendChild(timeSpan);
-
     var domainSpan = document.createElement('span');
     domainSpan.className = 'feed-domain';
     domainSpan.textContent = source;
     item.appendChild(domainSpan);
-
     var edgesDiv = document.createElement('div');
     edgesDiv.className = 'feed-edges';
-
     var showCount = Math.min(srcEdges.length, 8);
     for (var j = 0; j < showCount; j++) {
       var edgeDiv = document.createElement('div');
@@ -470,7 +455,6 @@ function addFeedItem(batch) {
       edgeDiv.appendChild(document.createTextNode(srcEdges[j].target));
       edgesDiv.appendChild(edgeDiv);
     }
-
     if (srcEdges.length > 8) {
       var moreDiv = document.createElement('div');
       moreDiv.className = 'feed-edge';
@@ -478,19 +462,17 @@ function addFeedItem(batch) {
       moreDiv.textContent = '+' + (srcEdges.length - 8) + ' more';
       edgesDiv.appendChild(moreDiv);
     }
-
     item.appendChild(edgesDiv);
     feed.insertBefore(item, feed.firstChild);
     feedCount++;
   }
-
   while (feedCount > MAX_FEED && feed.lastChild) {
     feed.removeChild(feed.lastChild);
     feedCount--;
   }
 }
 
-// Stats
+// ---- Stats ----
 function updateStats(stats) {
   document.getElementById('stat-domains').textContent = formatNum(stats.domains_total);
   document.getElementById('stat-edges').textContent = formatNum(stats.edges_total);
@@ -505,25 +487,19 @@ function formatNum(n) {
   return n.toString();
 }
 
-// Process batch for graph
+// ---- Graph updates ----
 function updateGraph(batch) {
   var i;
-  for (i = 0; i < (batch.domains || []).length; i++) {
-    addNode(batch.domains[i], batch.domains[i], 'domain');
-  }
-  for (i = 0; i < (batch.ips || []).length; i++) {
-    addNode(batch.ips[i], batch.ips[i], 'ip');
-  }
+  for (i = 0; i < (batch.domains || []).length; i++) addNode(batch.domains[i], batch.domains[i], 'domain');
+  for (i = 0; i < (batch.ips || []).length; i++) addNode(batch.ips[i], batch.ips[i], 'ip');
   for (i = 0; i < (batch.certs || []).length; i++) {
     var c = batch.certs[i];
-    var short = c.spki.substring(0, 8) + '...';
-    addNode(c.spki, c.subject_cn || short, 'cert');
+    addNode(c.spki, c.subject_cn || c.spki.substring(0, 8) + '...', 'cert');
   }
-
   for (i = 0; i < batch.edges.length; i++) {
     var e = batch.edges[i];
-    if (!nodeSet.has(e.source)) addNode(e.source, e.source, guessType(e.source, e.type, 'source'));
-    if (!nodeSet.has(e.target)) addNode(e.target, e.target, guessType(e.target, e.type, 'target'));
+    if (!gNodes[e.source]) addNode(e.source, e.source, guessType(e.source, e.type, 'source'));
+    if (!gNodes[e.target]) addNode(e.target, e.target, guessType(e.target, e.type, 'target'));
     addEdge(e.source, e.target, e.type);
   }
 }
@@ -535,7 +511,7 @@ function guessType(name, edgeType, role) {
   return 'domain';
 }
 
-// SSE connection
+// ---- SSE + history ----
 var statusEl = document.getElementById('connection-status');
 
 function processBatch(batch) {
@@ -548,47 +524,22 @@ function loadHistory() {
   fetch('/api/history')
     .then(function(r) { return r.json(); })
     .then(function(batches) {
-      for (var i = 0; i < batches.length; i++) {
-        processBatch(batches[i]);
-      }
-      // Fit graph to show all loaded nodes
-      if (batches.length > 0) {
-        setTimeout(function() { network.fit(); }, 500);
-      }
+      for (var i = 0; i < batches.length; i++) processBatch(batches[i]);
+      if (batches.length > 0) setTimeout(graphFit, 800);
     })
     .catch(function() {});
 }
 
 function connect() {
-  // Load stats and history first
-  fetch('/api/stats')
-    .then(function(r) { return r.json(); })
-    .then(updateStats)
-    .catch(function() {});
-
+  fetch('/api/stats').then(function(r) { return r.json(); }).then(updateStats).catch(function() {});
   loadHistory();
-
-  // Then connect SSE for live updates
   var es = new EventSource('/api/events');
-
-  es.onopen = function() {
-    statusEl.textContent = 'CONNECTED';
-    statusEl.classList.add('connected');
-  };
-
-  es.onerror = function() {
-    statusEl.textContent = 'RECONNECTING';
-    statusEl.classList.remove('connected');
-  };
-
+  es.onopen = function() { statusEl.textContent = 'CONNECTED'; statusEl.classList.add('connected'); };
+  es.onerror = function() { statusEl.textContent = 'RECONNECTING'; statusEl.classList.remove('connected'); };
   es.onmessage = function(msg) {
     var ev = JSON.parse(msg.data);
     if (ev.type === 'ping') return;
-
-    if (ev.type === 'batch') {
-      var batch = JSON.parse(ev.payload);
-      processBatch(batch);
-    }
+    if (ev.type === 'batch') processBatch(JSON.parse(ev.payload));
   };
 }
 
