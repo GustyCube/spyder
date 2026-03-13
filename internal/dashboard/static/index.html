@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPYDER Dashboard</title>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --surface: #111827;
+    --border: #1f2937;
+    --text: #e5e7eb;
+    --text-dim: #6b7280;
+    --accent: #06b6d4;
+    --green: #22c55e;
+    --blue: #3b82f6;
+    --yellow: #eab308;
+    --purple: #a855f7;
+    --cyan: #06b6d4;
+    --red: #ef4444;
+    --white: #f8fafc;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 2px;
+  }
+
+  #connection-status {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: var(--red);
+    color: #fff;
+    transition: background 0.3s;
+  }
+
+  #connection-status.connected {
+    background: var(--green);
+  }
+
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 14px 20px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    height: calc(100vh - 110px);
+  }
+
+  .feed-panel {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 10px 16px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .feed {
+    overflow-y: auto;
+    flex: 1;
+    padding: 0;
+  }
+
+  .feed::-webkit-scrollbar { width: 6px; }
+  .feed::-webkit-scrollbar-track { background: var(--bg); }
+  .feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .feed-item {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    line-height: 1.5;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .feed-domain {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .feed-time {
+    color: var(--text-dim);
+    font-size: 10px;
+    float: right;
+  }
+
+  .feed-edges {
+    margin-top: 4px;
+    padding-left: 12px;
+  }
+
+  .feed-edge {
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+
+  .edge-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+  }
+
+  .edge-RESOLVES_TO { background: rgba(34,197,94,0.15); color: var(--green); }
+  .edge-USES_NS { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .edge-ALIAS_OF { background: rgba(234,179,8,0.15); color: var(--yellow); }
+  .edge-USES_MX { background: rgba(168,85,247,0.15); color: var(--purple); }
+  .edge-LINKS_TO { background: rgba(6,182,212,0.15); color: var(--cyan); }
+  .edge-USES_CERT { background: rgba(248,250,252,0.15); color: var(--white); }
+
+  .graph-panel {
+    position: relative;
+    background: var(--bg);
+  }
+
+  #graph {
+    width: 100%;
+    height: 100%;
+  }
+
+  .graph-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 6px;
+    z-index: 10;
+  }
+
+  .graph-btn {
+    padding: 6px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .graph-btn:hover {
+    background: var(--border);
+    color: var(--text);
+  }
+
+  .legend {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    display: flex;
+    gap: 12px;
+    font-size: 10px;
+    color: var(--text-dim);
+    z-index: 10;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SPYDER</h1>
+  <span id="connection-status">DISCONNECTED</span>
+</header>
+
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-value" id="stat-domains">0</div>
+    <div class="stat-label">Domains</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" id="stat-edges">0</div>
+    <div class="stat-label">Edges</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" id="stat-ips">0</div>
+    <div class="stat-label">IPs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" id="stat-certs">0</div>
+    <div class="stat-label">Certs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" id="stat-rate">0.0</div>
+    <div class="stat-label">Domains/sec</div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="feed-panel">
+    <div class="panel-header">Activity Feed</div>
+    <div class="feed" id="feed">
+      <div class="empty-state" id="feed-empty">Waiting for events...</div>
+    </div>
+  </div>
+
+  <div class="graph-panel">
+    <div class="graph-controls">
+      <button class="graph-btn" onclick="network.fit()">Fit</button>
+      <button class="graph-btn" onclick="togglePhysics()">Physics</button>
+      <button class="graph-btn" onclick="clearGraph()">Clear</button>
+    </div>
+    <div id="graph"></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div> Domain</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> IP</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div> Cert</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#3b82f6;border-radius:0"></div> NS</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const MAX_FEED = 200;
+const MAX_NODES = 500;
+const EDGE_COLORS = {
+  RESOLVES_TO: '#22c55e',
+  USES_NS: '#3b82f6',
+  ALIAS_OF: '#eab308',
+  USES_MX: '#a855f7',
+  LINKS_TO: '#06b6d4',
+  USES_CERT: '#94a3b8'
+};
+
+const EDGE_LABELS = {
+  RESOLVES_TO: 'A',
+  USES_NS: 'NS',
+  ALIAS_OF: 'CNAME',
+  USES_MX: 'MX',
+  LINKS_TO: 'LINK',
+  USES_CERT: 'TLS'
+};
+
+// vis-network setup
+const nodes = new vis.DataSet();
+const edges = new vis.DataSet();
+const container = document.getElementById('graph');
+
+const network = new vis.Network(container, { nodes, edges }, {
+  physics: {
+    solver: 'forceAtlas2Based',
+    forceAtlas2Based: {
+      gravitationalConstant: -30,
+      centralGravity: 0.005,
+      springLength: 100,
+      springConstant: 0.04,
+      damping: 0.4
+    },
+    stabilization: { iterations: 50 }
+  },
+  nodes: {
+    font: { color: '#e5e7eb', size: 10, face: 'monospace' },
+    borderWidth: 0,
+    shadow: false
+  },
+  edges: {
+    width: 1,
+    smooth: { type: 'continuous' },
+    font: { color: '#6b7280', size: 8, strokeWidth: 0, face: 'monospace' },
+    arrows: { to: { enabled: true, scaleFactor: 0.4 } }
+  },
+  interaction: {
+    hover: true,
+    tooltipDelay: 100
+  }
+});
+
+let physicsEnabled = true;
+
+function togglePhysics() {
+  physicsEnabled = !physicsEnabled;
+  network.setOptions({ physics: { enabled: physicsEnabled } });
+}
+
+function clearGraph() {
+  nodes.clear();
+  edges.clear();
+  nodeSet.clear();
+}
+
+// Track which nodes exist
+const nodeSet = new Set();
+const nodeAge = [];
+
+function addNode(id, label, type) {
+  if (nodeSet.has(id)) return;
+  nodeSet.add(id);
+  nodeAge.push([id, Date.now()]);
+
+  var color, shape, size;
+  switch (type) {
+    case 'domain':
+      color = '#06b6d4'; shape = 'dot'; size = 12; break;
+    case 'ip':
+      color = '#22c55e'; shape = 'dot'; size = 8; break;
+    case 'cert':
+      color = '#a855f7'; shape = 'diamond'; size = 8; break;
+    case 'ns':
+      color = '#3b82f6'; shape = 'square'; size = 8; break;
+    default:
+      color = '#6b7280'; shape = 'dot'; size = 8;
+  }
+
+  nodes.add({
+    id: id, label: label,
+    color: { background: color, border: color, highlight: { background: color, border: '#fff' } },
+    shape: shape, size: size
+  });
+
+  pruneGraph();
+}
+
+function addEdge(from, to, type) {
+  var edgeId = from + '|' + type + '|' + to;
+  if (edges.get(edgeId)) return;
+  edges.add({
+    id: edgeId, from: from, to: to,
+    color: { color: EDGE_COLORS[type] || '#6b7280', opacity: 0.6 },
+    label: EDGE_LABELS[type] || type
+  });
+}
+
+function pruneGraph() {
+  while (nodeAge.length > MAX_NODES) {
+    var old = nodeAge.shift();
+    nodes.remove(old[0]);
+    nodeSet.delete(old[0]);
+  }
+}
+
+// Feed
+var feed = document.getElementById('feed');
+var feedEmpty = document.getElementById('feed-empty');
+var feedCount = 0;
+
+function createBadge(edgeType) {
+  var badge = document.createElement('span');
+  badge.className = 'edge-badge edge-' + edgeType;
+  badge.textContent = EDGE_LABELS[edgeType] || edgeType;
+  return badge;
+}
+
+function addFeedItem(batch) {
+  if (feedEmpty && feedEmpty.parentNode) feedEmpty.parentNode.removeChild(feedEmpty);
+
+  // Group edges by source
+  var bySource = {};
+  var sources = [];
+  for (var i = 0; i < batch.edges.length; i++) {
+    var e = batch.edges[i];
+    if (!bySource[e.source]) {
+      bySource[e.source] = [];
+      sources.push(e.source);
+    }
+    bySource[e.source].push(e);
+  }
+
+  for (var s = 0; s < sources.length; s++) {
+    var source = sources[s];
+    var srcEdges = bySource[source];
+
+    var item = document.createElement('div');
+    item.className = 'feed-item';
+
+    var timeSpan = document.createElement('span');
+    timeSpan.className = 'feed-time';
+    timeSpan.textContent = new Date(batch.timestamp).toLocaleTimeString();
+    item.appendChild(timeSpan);
+
+    var domainSpan = document.createElement('span');
+    domainSpan.className = 'feed-domain';
+    domainSpan.textContent = source;
+    item.appendChild(domainSpan);
+
+    var edgesDiv = document.createElement('div');
+    edgesDiv.className = 'feed-edges';
+
+    var showCount = Math.min(srcEdges.length, 8);
+    for (var j = 0; j < showCount; j++) {
+      var edgeDiv = document.createElement('div');
+      edgeDiv.className = 'feed-edge';
+      edgeDiv.appendChild(createBadge(srcEdges[j].type));
+      edgeDiv.appendChild(document.createTextNode(srcEdges[j].target));
+      edgesDiv.appendChild(edgeDiv);
+    }
+
+    if (srcEdges.length > 8) {
+      var moreDiv = document.createElement('div');
+      moreDiv.className = 'feed-edge';
+      moreDiv.style.color = '#4b5563';
+      moreDiv.textContent = '+' + (srcEdges.length - 8) + ' more';
+      edgesDiv.appendChild(moreDiv);
+    }
+
+    item.appendChild(edgesDiv);
+    feed.insertBefore(item, feed.firstChild);
+    feedCount++;
+  }
+
+  while (feedCount > MAX_FEED && feed.lastChild) {
+    feed.removeChild(feed.lastChild);
+    feedCount--;
+  }
+}
+
+// Stats
+function updateStats(stats) {
+  document.getElementById('stat-domains').textContent = formatNum(stats.domains_total);
+  document.getElementById('stat-edges').textContent = formatNum(stats.edges_total);
+  document.getElementById('stat-ips').textContent = formatNum(stats.ips_total);
+  document.getElementById('stat-certs').textContent = formatNum(stats.certs_total);
+  document.getElementById('stat-rate').textContent = stats.domains_per_sec.toFixed(1);
+}
+
+function formatNum(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n.toString();
+}
+
+// Process batch for graph
+function updateGraph(batch) {
+  var i;
+  for (i = 0; i < (batch.domains || []).length; i++) {
+    addNode(batch.domains[i], batch.domains[i], 'domain');
+  }
+  for (i = 0; i < (batch.ips || []).length; i++) {
+    addNode(batch.ips[i], batch.ips[i], 'ip');
+  }
+  for (i = 0; i < (batch.certs || []).length; i++) {
+    var c = batch.certs[i];
+    var short = c.spki.substring(0, 8) + '...';
+    addNode(c.spki, c.subject_cn || short, 'cert');
+  }
+
+  for (i = 0; i < batch.edges.length; i++) {
+    var e = batch.edges[i];
+    if (!nodeSet.has(e.source)) addNode(e.source, e.source, guessType(e.source, e.type, 'source'));
+    if (!nodeSet.has(e.target)) addNode(e.target, e.target, guessType(e.target, e.type, 'target'));
+    addEdge(e.source, e.target, e.type);
+  }
+}
+
+function guessType(name, edgeType, role) {
+  if (edgeType === 'RESOLVES_TO' && role === 'target') return 'ip';
+  if (edgeType === 'USES_NS') return role === 'target' ? 'ns' : 'domain';
+  if (edgeType === 'USES_CERT' && role === 'target') return 'cert';
+  return 'domain';
+}
+
+// SSE connection
+var statusEl = document.getElementById('connection-status');
+
+function connect() {
+  fetch('/api/stats')
+    .then(function(r) { return r.json(); })
+    .then(updateStats)
+    .catch(function() {});
+
+  var es = new EventSource('/api/events');
+
+  es.onopen = function() {
+    statusEl.textContent = 'CONNECTED';
+    statusEl.classList.add('connected');
+  };
+
+  es.onerror = function() {
+    statusEl.textContent = 'RECONNECTING';
+    statusEl.classList.remove('connected');
+  };
+
+  es.onmessage = function(msg) {
+    var ev = JSON.parse(msg.data);
+    if (ev.type === 'ping') return;
+
+    if (ev.type === 'batch') {
+      var batch = JSON.parse(ev.payload);
+      updateStats(batch.stats);
+      addFeedItem(batch);
+      updateGraph(batch);
+    }
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
