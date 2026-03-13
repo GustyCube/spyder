@@ -12,14 +12,15 @@ import (
 
 // InteractiveLogger wraps zap logger with progress support
 type InteractiveLogger struct {
-	logger      *zap.SugaredLogger
-	mu          sync.Mutex
-	lastLine    string
-	isProgress  bool
-	output      io.Writer
-	progressBar *ProgressBar
-	stats       *Stats
-	spinner     *Spinner
+	logger       *zap.SugaredLogger
+	mu           sync.Mutex
+	lastLine     string
+	isProgress   bool
+	output       io.Writer
+	progressBar  *ProgressBar
+	stats        *Stats
+	spinner      *Spinner
+	spinnerStop  chan struct{}
 	showProgress bool
 }
 
@@ -121,21 +122,29 @@ func (il *InteractiveLogger) StartSpinner(message string) {
 		return
 	}
 
+	il.StopSpinner()
+
 	il.mu.Lock()
 	defer il.mu.Unlock()
 
 	il.spinner = NewSpinner(message)
 	il.spinner.Start()
+	il.spinnerStop = make(chan struct{})
+	stopCh := il.spinnerStop
 
-	// Start spinner update loop
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 
 		for {
 			select {
+			case <-stopCh:
+				return
 			case <-ticker.C:
-				if il.spinner == nil || !il.spinner.IsActive() {
+				il.mu.Lock()
+				active := il.spinner != nil && il.spinner.IsActive()
+				il.mu.Unlock()
+				if !active {
 					return
 				}
 				il.SetProgress(il.spinner.String())
@@ -148,6 +157,11 @@ func (il *InteractiveLogger) StartSpinner(message string) {
 func (il *InteractiveLogger) StopSpinner() {
 	il.mu.Lock()
 	defer il.mu.Unlock()
+
+	if il.spinnerStop != nil {
+		close(il.spinnerStop)
+		il.spinnerStop = nil
+	}
 
 	if il.spinner != nil {
 		il.spinner.Stop()
