@@ -112,12 +112,12 @@ func (e *Emitter) Run(ctx context.Context, in <-chan Batch, log *zap.SugaredLogg
 			if !ok { return }
 			e.append(b)
 			if len(e.acc.Edges) >= e.batchMax || (len(e.acc.NodesD)+len(e.acc.NodesIP)+len(e.acc.NodesC)) >= e.batchMax/2 {
-				e.flush(log)
+				e.flush(ctx, log)
 				if !t.Stop() { select { case <-t.C: default: } }
 				t.Reset(e.flushEvery)
 			}
 		case <-t.C:
-			e.flush(log)
+			e.flush(ctx, log)
 			t.Reset(e.flushEvery)
 		case <-ctx.Done():
 			return
@@ -134,26 +134,32 @@ func (e *Emitter) append(b Batch) {
 	e.acc.Edges = append(e.acc.Edges, b.Edges...)
 }
 
-func (e *Emitter) flush(log *zap.SugaredLogger) {
+func (e *Emitter) flush(ctx context.Context, log *zap.SugaredLogger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.acc.Edges)+len(e.acc.NodesD)+len(e.acc.NodesIP)+len(e.acc.NodesC) == 0 { return }
 	if e.ingest == "" {
 		_ = json.NewEncoder(os.Stdout).Encode(e.acc)
 	} else {
-		if err := e.post(e.acc); err != nil {
-			log.Warn("ingest failed, spooling", "err", err)
+		if err := e.post(ctx, e.acc); err != nil {
+			log.Warnw("ingest failed, spooling", "err", err)
 			e.spool(e.acc, log)
 		}
 	}
 	e.acc = Batch{ProbeID: e.probeID, RunID: e.runID}
 }
 
-func (e *Emitter) post(b Batch) error {
+func (e *Emitter) post(ctx context.Context, b Batch) error {
 	buf := &bytes.Buffer{}
-	_ = json.NewEncoder(buf).Encode(b)
+	if err := json.NewEncoder(buf).Encode(b); err != nil {
+		return fmt.Errorf("encoding batch: %w", err)
+	}
+	data := buf.Bytes()
 	op := func() error {
-		req, _ := http.NewRequest("POST", e.ingest, bytes.NewReader(buf.Bytes()))
+		req, err := http.NewRequestWithContext(ctx, "POST", e.ingest, bytes.NewReader(data))
+		if err != nil {
+			return backoff.Permanent(fmt.Errorf("creating request: %w", err))
+		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := e.client.Do(req)
 		if err != nil { return err }
@@ -165,7 +171,7 @@ func (e *Emitter) post(b Batch) error {
 	}
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = 30 * time.Second
-	return backoff.Retry(op, bo)
+	return backoff.Retry(op, backoff.WithContext(bo, ctx))
 }
 
 func (e *Emitter) spool(b Batch, log *zap.SugaredLogger) {
@@ -177,7 +183,7 @@ func (e *Emitter) spool(b Batch, log *zap.SugaredLogger) {
 }
 
 func (e *Emitter) Drain(log *zap.SugaredLogger) {
-	e.flush(log)
+	e.flush(context.Background(), log)
 	// attempt to resend spooled files
 	entries, _ := os.ReadDir(e.spoolDir)
 	for _, ent := range entries {
@@ -185,7 +191,7 @@ func (e *Emitter) Drain(log *zap.SugaredLogger) {
 		f, err := os.Open(p); if err != nil { continue }
 		var b Batch
 		if err := json.NewDecoder(f).Decode(&b); err == nil {
-			if e.ingest == "" || e.post(b) == nil {
+			if e.ingest == "" || e.post(context.Background(), b) == nil {
 				_ = f.Close(); _ = os.Remove(p); continue
 			}
 		}
