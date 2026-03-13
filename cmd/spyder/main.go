@@ -14,6 +14,7 @@ import (
 
 	"github.com/gustycube/spyder/internal/config"
 	"github.com/gustycube/spyder/internal/dedup"
+	"github.com/gustycube/spyder/internal/discover"
 	"github.com/gustycube/spyder/internal/emit"
 	"github.com/gustycube/spyder/internal/health"
 	"github.com/gustycube/spyder/internal/logging"
@@ -45,6 +46,8 @@ func main() {
 	var verbose bool
 	var progress bool
 	var showVersion bool
+	var continuous bool
+	var maxDomains int64
 
 	// Add config file flag
 	flag.StringVar(&configFile, "config", "", "path to config file (YAML or JSON)")
@@ -70,6 +73,8 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "verbose logging")
 	flag.BoolVar(&progress, "progress", true, "show progress indicators")
 	flag.BoolVar(&showVersion, "version", false, "show version and exit")
+	flag.BoolVar(&continuous, "continuous", false, "enable recursive crawling of discovered domains")
+	flag.Int64Var(&maxDomains, "max_domains", 0, "max discovered domains to crawl in continuous mode (0 = unlimited)")
 	
 	// Custom usage function
 	flag.Usage = func() {
@@ -270,15 +275,21 @@ func main() {
 	}
 	go emitter.Run(ctx, batches, log)
 
-	// Initialize task queue
+	// Initialize task queue and discovery sink
 	tasks := make(chan string, 8192)
+	var sink discover.Sink
 
-	// Use Redis queue or file reader
 	if cfg.RedisQueueAddr != "" {
 		log.Info("redis queue enabled", "addr", cfg.RedisQueueAddr, "key", cfg.RedisQueueKey)
 		q, err := queue.NewRedis(cfg.RedisQueueAddr, cfg.RedisQueueKey, 120*time.Second)
 		if err != nil {
 			log.Fatal("redis queue init", "err", err)
+		}
+		if continuous {
+			sink = discover.NewRedisSink(q, d, maxDomains)
+			log.Info("continuous mode enabled (redis)", "max_domains", maxDomains)
+		} else {
+			sink = discover.NoopSink{}
 		}
 		go func() {
 			defer close(tasks)
@@ -300,19 +311,51 @@ func main() {
 			}
 		}()
 	} else {
-		go func() {
-			defer close(tasks)
-			sc := bufio.NewScanner(f)
-			sc.Buffer(make([]byte, 0, 1024), 1024*1024)
-			for sc.Scan() {
-				line := strings.TrimSpace(sc.Text())
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
+		if continuous {
+			// In continuous mode, discovered domains feed back into tasks
+			discoveryCh := make(chan string, 8192)
+			sink = discover.NewChannelSink(discoveryCh, d, maxDomains)
+			log.Info("continuous mode enabled (in-memory)", "max_domains", maxDomains)
+
+			go func() {
+				defer close(tasks)
+				// First, read all seed domains from file
+				sc := bufio.NewScanner(f)
+				sc.Buffer(make([]byte, 0, 1024), 1024*1024)
+				for sc.Scan() {
+					line := strings.TrimSpace(sc.Text())
+					if line == "" || strings.HasPrefix(line, "#") {
+						continue
+					}
+					line = strings.ToLower(strings.TrimSuffix(line, "."))
+					tasks <- line
 				}
-				line = strings.ToLower(strings.TrimSuffix(line, "."))
-				tasks <- line
-			}
-		}()
+				// Then drain discovered domains until context is cancelled
+				for {
+					select {
+					case h := <-discoveryCh:
+						tasks <- h
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+		} else {
+			sink = discover.NoopSink{}
+			go func() {
+				defer close(tasks)
+				sc := bufio.NewScanner(f)
+				sc.Buffer(make([]byte, 0, 1024), 1024*1024)
+				for sc.Scan() {
+					line := strings.TrimSpace(sc.Text())
+					if line == "" || strings.HasPrefix(line, "#") {
+						continue
+					}
+					line = strings.ToLower(strings.TrimSuffix(line, "."))
+					tasks <- line
+				}
+			}()
+		}
 	}
 
 	// Log configuration
@@ -320,6 +363,7 @@ func main() {
 		"probe", cfg.Probe,
 		"run", cfg.Run,
 		"concurrency", cfg.Concurrency,
+		"continuous", continuous,
 		"exclude_tlds", cfg.ExcludeTLDs,
 		"config_file", configFile,
 	)
@@ -329,7 +373,7 @@ func main() {
 	log.Info("service marked as ready")
 
 	// Start probe
-	p := probe.New(cfg.UA, cfg.Probe, cfg.Run, cfg.ExcludeTLDs, d, batches, log)
+	p := probe.New(cfg.UA, cfg.Probe, cfg.Run, cfg.ExcludeTLDs, d, sink, batches, log)
 	p.Run(ctx, tasks, cfg.Concurrency)
 
 	// Wait for emitter to drain

@@ -11,14 +11,15 @@ import (
 	"time"
 
 	"github.com/gustycube/spyder/internal/dedup"
+	"github.com/gustycube/spyder/internal/discover"
 	"github.com/gustycube/spyder/internal/dns"
 	"github.com/gustycube/spyder/internal/emit"
 	"github.com/gustycube/spyder/internal/extract"
 	"github.com/gustycube/spyder/internal/httpclient"
+	"github.com/gustycube/spyder/internal/metrics"
 	"github.com/gustycube/spyder/internal/rate"
 	"github.com/gustycube/spyder/internal/robots"
 	"github.com/gustycube/spyder/internal/tlsinfo"
-	"github.com/gustycube/spyder/internal/metrics"
 	"go.uber.org/zap"
 )
 
@@ -28,6 +29,7 @@ type Probe struct {
 	runID    string
 	excluded []string
 	dedup    dedup.Interface
+	sink     discover.Sink
 	out      chan<- emit.Batch
 	hc       *httpclient.ResilientClient
 	rob      *robots.Cache
@@ -35,11 +37,11 @@ type Probe struct {
 	log      *zap.SugaredLogger
 }
 
-func New(ua, probeID, runID string, excluded []string, d dedup.Interface, out chan<- emit.Batch, log *zap.SugaredLogger) *Probe {
+func New(ua, probeID, runID string, excluded []string, d dedup.Interface, sink discover.Sink, out chan<- emit.Batch, log *zap.SugaredLogger) *Probe {
 	baseClient := httpclient.Default()
 	hc := httpclient.NewResilientClient(baseClient)
 	return &Probe{
-		ua: ua, probeID: probeID, runID: runID, excluded: excluded, dedup: d, out: out,
+		ua: ua, probeID: probeID, runID: runID, excluded: excluded, dedup: d, sink: sink, out: out,
 		hc: hc, rob: robots.NewCache(baseClient, ua), ratelim: rate.New(1.0, 1), log: log,
 	}
 }
@@ -78,17 +80,26 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeResolvesTo, Source: host, Target: ip, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeResolvesTo).Inc() }
 	}
 	for _, n := range ns {
-		if !p.dedup.Seen(emit.DedupDomain+n) { nodesD = append(nodesD, emit.NodeDomain{Host: n, Apex: extract.Apex(n), FirstSeen: now, LastSeen: now}) }
+		if !p.dedup.Seen(emit.DedupDomain+n) {
+			nodesD = append(nodesD, emit.NodeDomain{Host: n, Apex: extract.Apex(n), FirstSeen: now, LastSeen: now})
+			p.sink.Submit(ctx, n)
+		}
 		k := emit.DedupEdge+host+"|"+emit.EdgeUsesNS+"|"+n
 		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeUsesNS, Source: host, Target: n, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeUsesNS).Inc() }
 	}
 	if cname != "" {
-		if !p.dedup.Seen(emit.DedupDomain+cname) { nodesD = append(nodesD, emit.NodeDomain{Host: cname, Apex: extract.Apex(cname), FirstSeen: now, LastSeen: now}) }
+		if !p.dedup.Seen(emit.DedupDomain+cname) {
+			nodesD = append(nodesD, emit.NodeDomain{Host: cname, Apex: extract.Apex(cname), FirstSeen: now, LastSeen: now})
+			p.sink.Submit(ctx, cname)
+		}
 		k := emit.DedupEdge+host+"|"+emit.EdgeAliasOf+"|"+cname
 		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeAliasOf, Source: host, Target: cname, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}) }
 	}
 	for _, m := range mx {
-		if !p.dedup.Seen(emit.DedupDomain+m) { nodesD = append(nodesD, emit.NodeDomain{Host: m, Apex: extract.Apex(m), FirstSeen: now, LastSeen: now}) }
+		if !p.dedup.Seen(emit.DedupDomain+m) {
+			nodesD = append(nodesD, emit.NodeDomain{Host: m, Apex: extract.Apex(m), FirstSeen: now, LastSeen: now})
+			p.sink.Submit(ctx, m)
+		}
 		k := emit.DedupEdge+host+"|"+emit.EdgeUsesMX+"|"+m
 		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeUsesMX, Source: host, Target: m, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeUsesMX).Inc() }
 	}
@@ -133,7 +144,10 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 			}
 			outs := extract.ExternalDomains(host, links)
 			for _, h := range outs {
-				if !p.dedup.Seen(emit.DedupDomain+h) { nodesD = append(nodesD, emit.NodeDomain{Host: h, Apex: extract.Apex(h), FirstSeen: now, LastSeen: now}) }
+				if !p.dedup.Seen(emit.DedupDomain+h) {
+					nodesD = append(nodesD, emit.NodeDomain{Host: h, Apex: extract.Apex(h), FirstSeen: now, LastSeen: now})
+					p.sink.Submit(ctx, h)
+				}
 				k := emit.DedupEdge+host+"|"+emit.EdgeLinksTo+"|"+h
 				if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeLinksTo, Source: host, Target: h, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeLinksTo).Inc() }
 			}
