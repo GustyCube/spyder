@@ -8,7 +8,8 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/gustycube/spyder/internal/emit"
 )
 
 // Format represents the output format
@@ -61,7 +62,7 @@ func NewStdoutWriter(format string) (*Writer, error) {
 }
 
 // WriteBatch writes a batch in the configured format
-func (w *Writer) WriteBatch(batch interface{}) error {
+func (w *Writer) WriteBatch(batch emit.Batch) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -72,7 +73,6 @@ func (w *Writer) WriteBatch(batch interface{}) error {
 		return encoder.Encode(batch)
 
 	case FormatJSONL:
-		// For JSONL, we need to extract and write individual records
 		data, err := json.Marshal(batch)
 		if err != nil {
 			return err
@@ -93,47 +93,27 @@ func (w *Writer) WriteBatch(batch interface{}) error {
 }
 
 // writeCSV writes batch data as CSV
-func (w *Writer) writeCSV(batch interface{}) error {
-	// Write CSV header if first time
+func (w *Writer) writeCSV(batch emit.Batch) error {
 	if !w.hasHeader {
 		w.csvWriter.Write([]string{
-			"timestamp", "type", "source", "target", "observed_at", "probe_id", "run_id",
+			"type", "source", "target", "observed_at", "probe_id", "run_id",
 		})
 		w.hasHeader = true
 	}
 
-	// Use reflection to extract edges from batch
-	// This is a simplified version - in production you'd want proper type checking
-	if b, ok := batch.(map[string]interface{}); ok {
-		if edges, ok := b["edges"].([]interface{}); ok {
-			for _, edge := range edges {
-				if e, ok := edge.(map[string]interface{}); ok {
-					w.csvWriter.Write([]string{
-						time.Now().Format(time.RFC3339),
-						getString(e, "type"),
-						getString(e, "source"),
-						getString(e, "target"),
-						getString(e, "observed_at"),
-						getString(b, "probe_id"),
-						getString(b, "run_id"),
-					})
-				}
-			}
-		}
+	for _, e := range batch.Edges {
+		w.csvWriter.Write([]string{
+			e.Type,
+			e.Source,
+			e.Target,
+			e.ObservedAt.Format("2006-01-02T15:04:05Z"),
+			e.ProbeID,
+			e.RunID,
+		})
 	}
 
+	w.csvWriter.Flush()
 	return w.csvWriter.Error()
-}
-
-// getString safely gets a string from a map
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-		return fmt.Sprintf("%v", v)
-	}
-	return ""
 }
 
 // Flush flushes any buffered data
