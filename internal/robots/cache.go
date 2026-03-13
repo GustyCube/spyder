@@ -47,6 +47,9 @@ func (c *Cache) Get(ctx context.Context, host string) (*robotstxt.RobotsData, er
 }
 
 func Allowed(rd *robotstxt.RobotsData, ua, path string) bool {
+	if rd == nil {
+		return true
+	}
 	g := rd.FindGroup(ua)
 	if g == nil { g = rd.FindGroup("*") }
 	if g == nil { return true }
