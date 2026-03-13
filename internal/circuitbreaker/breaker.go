@@ -140,7 +140,7 @@ func (cb *CircuitBreaker) beforeRequest() error {
 	defer cb.mu.Unlock()
 
 	now := time.Now()
-	state, generation := cb.currentState(now)
+	state, _ := cb.currentState(now)
 
 	switch state {
 	case StateOpen:
@@ -152,7 +152,6 @@ func (cb *CircuitBreaker) beforeRequest() error {
 	}
 
 	cb.counts.requests++
-	cb.setState(state, generation)
 
 	return nil
 }
@@ -163,7 +162,7 @@ func (cb *CircuitBreaker) afterRequest(success bool) {
 	defer cb.mu.Unlock()
 
 	now := time.Now()
-	state, generation := cb.currentState(now)
+	state, _ := cb.currentState(now)
 
 	switch state {
 	case StateClosed:
@@ -171,8 +170,6 @@ func (cb *CircuitBreaker) afterRequest(success bool) {
 	case StateHalfOpen:
 		cb.onHalfOpen(now, success)
 	}
-
-	cb.setState(state, generation)
 }
 
 // currentState returns the current state
