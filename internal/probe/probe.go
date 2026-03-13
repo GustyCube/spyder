@@ -73,24 +73,24 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 
 	ips, ns, cname, mx, _ := dns.ResolveAll(ctx, host)
 	for _, ip := range ips {
-		if !p.dedup.Seen("nodeip|"+ip) { nodesIP = append(nodesIP, emit.NodeIP{IP: ip, FirstSeen: now, LastSeen: now}) }
-		k := "edge|"+host+"|RESOLVES_TO|"+ip
-		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: "RESOLVES_TO", Source: host, Target: ip, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues("RESOLVES_TO").Inc() }
+		if !p.dedup.Seen(emit.DedupNodeIP+ip) { nodesIP = append(nodesIP, emit.NodeIP{IP: ip, FirstSeen: now, LastSeen: now}) }
+		k := emit.DedupEdge+host+"|"+emit.EdgeResolvesTo+"|"+ip
+		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeResolvesTo, Source: host, Target: ip, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeResolvesTo).Inc() }
 	}
 	for _, n := range ns {
-		if !p.dedup.Seen("domain|"+n) { nodesD = append(nodesD, emit.NodeDomain{Host: n, Apex: extract.Apex(n), FirstSeen: now, LastSeen: now}) }
-		k := "edge|"+host+"|USES_NS|"+n
-		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: "USES_NS", Source: host, Target: n, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues("USES_NS").Inc() }
+		if !p.dedup.Seen(emit.DedupDomain+n) { nodesD = append(nodesD, emit.NodeDomain{Host: n, Apex: extract.Apex(n), FirstSeen: now, LastSeen: now}) }
+		k := emit.DedupEdge+host+"|"+emit.EdgeUsesNS+"|"+n
+		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeUsesNS, Source: host, Target: n, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeUsesNS).Inc() }
 	}
 	if cname != "" {
-		if !p.dedup.Seen("domain|"+cname) { nodesD = append(nodesD, emit.NodeDomain{Host: cname, Apex: extract.Apex(cname), FirstSeen: now, LastSeen: now}) }
-		k := "edge|"+host+"|ALIAS_OF|"+cname
-		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: "ALIAS_OF", Source: host, Target: cname, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}) }
+		if !p.dedup.Seen(emit.DedupDomain+cname) { nodesD = append(nodesD, emit.NodeDomain{Host: cname, Apex: extract.Apex(cname), FirstSeen: now, LastSeen: now}) }
+		k := emit.DedupEdge+host+"|"+emit.EdgeAliasOf+"|"+cname
+		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeAliasOf, Source: host, Target: cname, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}) }
 	}
 	for _, m := range mx {
-		if !p.dedup.Seen("domain|"+m) { nodesD = append(nodesD, emit.NodeDomain{Host: m, Apex: extract.Apex(m), FirstSeen: now, LastSeen: now}) }
-		k := "edge|"+host+"|USES_MX|"+m
-		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: "USES_MX", Source: host, Target: m, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues("USES_MX").Inc() }
+		if !p.dedup.Seen(emit.DedupDomain+m) { nodesD = append(nodesD, emit.NodeDomain{Host: m, Apex: extract.Apex(m), FirstSeen: now, LastSeen: now}) }
+		k := emit.DedupEdge+host+"|"+emit.EdgeUsesMX+"|"+m
+		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeUsesMX, Source: host, Target: m, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeUsesMX).Inc() }
 	}
 
 	// Policy
@@ -133,18 +133,18 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 			}
 			outs := extract.ExternalDomains(host, links)
 			for _, h := range outs {
-				if !p.dedup.Seen("domain|"+h) { nodesD = append(nodesD, emit.NodeDomain{Host: h, Apex: extract.Apex(h), FirstSeen: now, LastSeen: now}) }
-				k := "edge|"+host+"|LINKS_TO|"+h
-				if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: "LINKS_TO", Source: host, Target: h, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues("LINKS_TO").Inc() }
+				if !p.dedup.Seen(emit.DedupDomain+h) { nodesD = append(nodesD, emit.NodeDomain{Host: h, Apex: extract.Apex(h), FirstSeen: now, LastSeen: now}) }
+				k := emit.DedupEdge+host+"|"+emit.EdgeLinksTo+"|"+h
+				if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeLinksTo, Source: host, Target: h, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeLinksTo).Inc() }
 			}
 		}
 		io.Copy(io.Discard, resp.Body); resp.Body.Close()
 	}
 
 	if cert, err := tlsinfo.FetchCert(host); err == nil && cert != nil {
-		if !p.dedup.Seen("cert|"+cert.SPKI) { nodesC = append(nodesC, *cert) }
-		k := "edge|"+host+"|USES_CERT|"+cert.SPKI
-		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: "USES_CERT", Source: host, Target: cert.SPKI, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues("USES_CERT").Inc() }
+		if !p.dedup.Seen(emit.DedupCert+cert.SPKI) { nodesC = append(nodesC, *cert) }
+		k := emit.DedupEdge+host+"|"+emit.EdgeUsesCert+"|"+cert.SPKI
+		if !p.dedup.Seen(k) { edges = append(edges, emit.Edge{Type: emit.EdgeUsesCert, Source: host, Target: cert.SPKI, ObservedAt: now, ProbeID: p.probeID, RunID: p.runID}); metrics.EdgesTotal.WithLabelValues(emit.EdgeUsesCert).Inc() }
 	}
 
 	p.flush(nodesD, nodesIP, nodesC, edges)

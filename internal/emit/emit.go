@@ -18,6 +18,24 @@ import (
 	"go.uber.org/zap"
 )
 
+// Edge type constants
+const (
+	EdgeResolvesTo = "RESOLVES_TO"
+	EdgeUsesNS     = "USES_NS"
+	EdgeAliasOf    = "ALIAS_OF"
+	EdgeUsesMX     = "USES_MX"
+	EdgeLinksTo    = "LINKS_TO"
+	EdgeUsesCert   = "USES_CERT"
+)
+
+// Dedup key prefix constants
+const (
+	DedupNodeIP  = "nodeip|"
+	DedupDomain  = "domain|"
+	DedupCert    = "cert|"
+	DedupEdge    = "edge|"
+)
+
 type Edge struct {
 	Type       string    `json:"type"`
 	Source     string    `json:"source"`
