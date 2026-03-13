@@ -75,19 +75,25 @@ type Batch struct {
 	Edges   []Edge       `json:"edges"`
 }
 
-type Emitter struct {
-	ingest    string
-	probeID   string
-	runID     string
-	batchMax  int
-	flushEvery time.Duration
-	spoolDir  string
-	client    *http.Client
-	mu        sync.Mutex
-	acc       Batch
+// StdoutWriter is an interface for writing batches to stdout in various formats.
+type StdoutWriter interface {
+	WriteBatch(batch Batch) error
 }
 
-func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Duration, spoolDir, mtlsCert, mtlsKey, mtlsCA string) (*Emitter, error) {
+type Emitter struct {
+	ingest       string
+	probeID      string
+	runID        string
+	batchMax     int
+	flushEvery   time.Duration
+	spoolDir     string
+	client       *http.Client
+	stdoutWriter StdoutWriter
+	mu           sync.Mutex
+	acc          Batch
+}
+
+func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Duration, spoolDir, mtlsCert, mtlsKey, mtlsCA string, sw StdoutWriter) (*Emitter, error) {
 	tlsCfg := &tls.Config{}
 
 	if mtlsCert != "" || mtlsKey != "" {
@@ -117,8 +123,9 @@ func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Dur
 	return &Emitter{
 		ingest: ingest, probeID: probeID, runID: runID,
 		batchMax: batchMax, flushEvery: flushEvery, spoolDir: spoolDir,
-		client: &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}, Timeout: 20 * time.Second},
-		acc:    Batch{ProbeID: probeID, RunID: runID},
+		client:       &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}, Timeout: 20 * time.Second},
+		stdoutWriter: sw,
+		acc:          Batch{ProbeID: probeID, RunID: runID},
 	}, nil
 }
 
@@ -157,7 +164,11 @@ func (e *Emitter) flush(ctx context.Context, log *zap.SugaredLogger) {
 	defer e.mu.Unlock()
 	if len(e.acc.Edges)+len(e.acc.NodesD)+len(e.acc.NodesIP)+len(e.acc.NodesC) == 0 { return }
 	if e.ingest == "" {
-		_ = json.NewEncoder(os.Stdout).Encode(e.acc)
+		if e.stdoutWriter != nil {
+			_ = e.stdoutWriter.WriteBatch(e.acc)
+		} else {
+			_ = json.NewEncoder(os.Stdout).Encode(e.acc)
+		}
 	} else {
 		if err := e.post(ctx, e.acc); err != nil {
 			log.Warnw("ingest failed, spooling", "err", err)

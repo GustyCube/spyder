@@ -13,12 +13,15 @@ import (
 	"time"
 
 	"github.com/gustycube/spyder/internal/config"
+	"github.com/gustycube/spyder/internal/dashboard"
 	"github.com/gustycube/spyder/internal/dedup"
 	"github.com/gustycube/spyder/internal/discover"
 	"github.com/gustycube/spyder/internal/emit"
 	"github.com/gustycube/spyder/internal/health"
+	"github.com/gustycube/spyder/internal/hub"
 	"github.com/gustycube/spyder/internal/logging"
 	"github.com/gustycube/spyder/internal/metrics"
+	"github.com/gustycube/spyder/internal/output"
 	"github.com/gustycube/spyder/internal/probe"
 	"github.com/gustycube/spyder/internal/queue"
 	"github.com/gustycube/spyder/internal/telemetry"
@@ -68,13 +71,15 @@ func main() {
 	flag.StringVar(&otelEndpoint, "otel_endpoint", "", "OTLP HTTP endpoint (host:port)")
 	flag.BoolVar(&otelInsecure, "otel_insecure", true, "OTLP insecure (no TLS)")
 	flag.StringVar(&otelService, "otel_service", "", "OTEL service.name")
-	flag.StringVar(&outputFormat, "output_format", "", "output format (json, jsonl, csv)")
+	flag.StringVar(&outputFormat, "output_format", "", "output format (json, jsonl, csv, pretty)")
 	flag.BoolVar(&quiet, "quiet", false, "suppress progress output")
 	flag.BoolVar(&verbose, "verbose", false, "verbose logging")
 	flag.BoolVar(&progress, "progress", true, "show progress indicators")
 	flag.BoolVar(&showVersion, "version", false, "show version and exit")
+	var enableDashboard bool
 	flag.BoolVar(&continuous, "continuous", false, "enable recursive crawling of discovered domains")
 	flag.Int64Var(&maxDomains, "max_domains", 0, "max discovered domains to crawl in continuous mode (0 = unlimited)")
+	flag.BoolVar(&enableDashboard, "dashboard", true, "enable live web dashboard on metrics port")
 	
 	// Custom usage function
 	flag.Usage = func() {
@@ -218,11 +223,7 @@ func main() {
 	healthHandler.SetMetadata("run", cfg.Run)
 	healthHandler.SetMetadata("version", "1.0.0")
 
-	// Start metrics and health server
-	if cfg.MetricsAddr != "" {
-		go metrics.ServeWithHealth(cfg.MetricsAddr, healthHandler, log)
-		log.Info("metrics and health server started", "addr", cfg.MetricsAddr)
-	}
+	// Metrics and dashboard server started after hub init (see below)
 
 	// Open domains file
 	f, err := os.Open(cfg.Domains)
@@ -257,8 +258,18 @@ func main() {
 		log.Info("memory dedupe enabled")
 	}
 
+	// Initialize output writer for stdout mode
+	var stdoutWriter emit.StdoutWriter
+	if cfg.Ingest == "" {
+		ow, err := output.NewStdoutWriter(cfg.OutputFormat)
+		if err != nil {
+			log.Fatal("output writer init", "err", err)
+		}
+		stdoutWriter = ow
+	}
+
 	// Initialize emitter
-	batches := make(chan emit.Batch, 1024)
+	emitterBatches := make(chan emit.Batch, 1024)
 	emitter, err := emit.NewEmitter(
 		cfg.Ingest,
 		cfg.Probe,
@@ -269,11 +280,28 @@ func main() {
 		cfg.MTLSCert,
 		cfg.MTLSKey,
 		cfg.MTLSCA,
+		stdoutWriter,
 	)
 	if err != nil {
 		log.Fatal("emitter init", "err", err)
 	}
-	go emitter.Run(ctx, batches, log)
+	go emitter.Run(ctx, emitterBatches, log)
+
+	// Initialize event hub (fans out batches to emitter + dashboard SSE)
+	batches := make(chan emit.Batch, 1024)
+	eventHub := hub.New(batches, emitterBatches)
+	go eventHub.Run(ctx, log)
+
+	// Register dashboard routes and start metrics server
+	if enableDashboard {
+		dashHandler := dashboard.NewHandler(eventHub, log)
+		dashHandler.RegisterRoutes()
+		log.Info("dashboard enabled", "url", "http://localhost"+cfg.MetricsAddr)
+	}
+	if cfg.MetricsAddr != "" {
+		go metrics.ServeWithHealth(cfg.MetricsAddr, healthHandler, log)
+		log.Info("metrics and health server started", "addr", cfg.MetricsAddr)
+	}
 
 	// Initialize task queue and discovery sink
 	tasks := make(chan string, 8192)

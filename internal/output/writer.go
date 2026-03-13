@@ -16,9 +16,10 @@ import (
 type Format string
 
 const (
-	FormatJSON  Format = "json"
-	FormatJSONL Format = "jsonl"
-	FormatCSV   Format = "csv"
+	FormatJSON   Format = "json"
+	FormatJSONL  Format = "jsonl"
+	FormatCSV    Format = "csv"
+	FormatPretty Format = "pretty"
 )
 
 // Writer handles formatted output
@@ -40,6 +41,8 @@ func NewWriter(format string, w io.Writer) (*Writer, error) {
 		f = FormatJSONL
 	case "csv":
 		f = FormatCSV
+	case "pretty":
+		f = FormatPretty
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
 	}
@@ -87,6 +90,9 @@ func (w *Writer) WriteBatch(batch emit.Batch) error {
 	case FormatCSV:
 		return w.writeCSV(batch)
 
+	case FormatPretty:
+		return w.writePretty(batch)
+
 	default:
 		return fmt.Errorf("unsupported format: %s", w.format)
 	}
@@ -114,6 +120,79 @@ func (w *Writer) writeCSV(batch emit.Batch) error {
 
 	w.csvWriter.Flush()
 	return w.csvWriter.Error()
+}
+
+// ANSI color codes
+const (
+	colorReset  = "\033[0m"
+	colorBold   = "\033[1m"
+	colorDim    = "\033[2m"
+	colorCyan   = "\033[36m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorMagenta = "\033[35m"
+	colorWhite  = "\033[37m"
+)
+
+// edgeSymbol returns a colored symbol for each edge type
+func edgeSymbol(edgeType string) (string, string) {
+	switch edgeType {
+	case "RESOLVES_TO":
+		return colorGreen + "A" + colorReset, colorDim + "dns" + colorReset
+	case "USES_NS":
+		return colorBlue + "NS" + colorReset, colorDim + "dns" + colorReset
+	case "ALIAS_OF":
+		return colorYellow + "CNAME" + colorReset, colorDim + "dns" + colorReset
+	case "USES_MX":
+		return colorMagenta + "MX" + colorReset, colorDim + "dns" + colorReset
+	case "LINKS_TO":
+		return colorCyan + "LINK" + colorReset, colorDim + "http" + colorReset
+	case "USES_CERT":
+		return colorWhite + "TLS" + colorReset, colorDim + "tls" + colorReset
+	default:
+		return edgeType, ""
+	}
+}
+
+// writePretty writes a human-readable summary of the batch
+func (w *Writer) writePretty(batch emit.Batch) error {
+	// Group edges by source domain
+	bySource := make(map[string][]emit.Edge)
+	var sources []string
+	for _, e := range batch.Edges {
+		if _, seen := bySource[e.Source]; !seen {
+			sources = append(sources, e.Source)
+		}
+		bySource[e.Source] = append(bySource[e.Source], e)
+	}
+
+	for _, src := range sources {
+		edges := bySource[src]
+		// Domain header
+		fmt.Fprintf(w.w, "\n%s%s%s%s\n", colorBold, colorCyan, src, colorReset)
+
+		for _, e := range edges {
+			sym, via := edgeSymbol(e.Type)
+			if via != "" {
+				fmt.Fprintf(w.w, "  %s%-5s%s %s %s\n", colorDim, via, colorReset, sym, e.Target)
+			} else {
+				fmt.Fprintf(w.w, "        %s %s\n", sym, e.Target)
+			}
+		}
+	}
+
+	// Cert summary if any
+	if len(batch.NodesC) > 0 {
+		fmt.Fprintf(w.w, "\n  %s%scerts%s\n", colorDim, colorWhite, colorReset)
+		for _, c := range batch.NodesC {
+			expires := c.NotAfter.Format("2006-01-02")
+			fmt.Fprintf(w.w, "    %s%s%s  issuer=%s  expires=%s\n",
+				colorWhite, c.SubjectCN, colorReset, c.IssuerCN, expires)
+		}
+	}
+
+	return nil
 }
 
 // Flush flushes any buffered data
