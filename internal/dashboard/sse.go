@@ -25,6 +25,7 @@ func NewHandler(h *hub.Hub, log *zap.SugaredLogger) *Handler {
 func (h *Handler) RegisterRoutes() {
 	http.HandleFunc("/api/events", h.ServeSSE)
 	http.HandleFunc("/api/stats", h.ServeStats)
+	http.HandleFunc("/api/history", h.ServeHistory)
 	http.Handle("/", http.FileServer(http.FS(staticFS())))
 }
 
@@ -74,4 +75,14 @@ func (h *Handler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ServeStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h.hub.GetStats())
+}
+
+// ServeHistory returns all stored batch events for late-joining clients.
+func (h *Handler) ServeHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	history := h.hub.GetHistory()
+	if history == nil {
+		history = []hub.BatchEvent{}
+	}
+	json.NewEncoder(w).Encode(history)
 }

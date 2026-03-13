@@ -538,12 +538,37 @@ function guessType(name, edgeType, role) {
 // SSE connection
 var statusEl = document.getElementById('connection-status');
 
+function processBatch(batch) {
+  updateStats(batch.stats);
+  addFeedItem(batch);
+  updateGraph(batch);
+}
+
+function loadHistory() {
+  fetch('/api/history')
+    .then(function(r) { return r.json(); })
+    .then(function(batches) {
+      for (var i = 0; i < batches.length; i++) {
+        processBatch(batches[i]);
+      }
+      // Fit graph to show all loaded nodes
+      if (batches.length > 0) {
+        setTimeout(function() { network.fit(); }, 500);
+      }
+    })
+    .catch(function() {});
+}
+
 function connect() {
+  // Load stats and history first
   fetch('/api/stats')
     .then(function(r) { return r.json(); })
     .then(updateStats)
     .catch(function() {});
 
+  loadHistory();
+
+  // Then connect SSE for live updates
   var es = new EventSource('/api/events');
 
   es.onopen = function() {
@@ -562,9 +587,7 @@ function connect() {
 
     if (ev.type === 'batch') {
       var batch = JSON.parse(ev.payload);
-      updateStats(batch.stats);
-      addFeedItem(batch);
-      updateGraph(batch);
+      processBatch(batch);
     }
   };
 }

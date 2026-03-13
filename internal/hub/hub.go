@@ -46,6 +46,8 @@ type Stats struct {
 	DomainsPerSec float64 `json:"domains_per_sec"`
 }
 
+const historySize = 500
+
 // Hub fans out emit.Batch from the probe to both the emitter and SSE subscribers.
 type Hub struct {
 	in  <-chan emit.Batch
@@ -56,6 +58,11 @@ type Hub struct {
 	next atomic.Int64
 
 	stats Stats
+
+	// history ring buffer of recent BatchEvents for late-joining clients
+	history    [historySize]BatchEvent
+	historyLen int
+	historyIdx int
 
 	// throughput: ring of per-second domain counts
 	ring    [60]int64
@@ -100,18 +107,7 @@ func (h *Hub) Run(ctx context.Context, log *zap.SugaredLogger) {
 }
 
 func (h *Hub) broadcast(b emit.Batch) {
-	// Update stats
-	h.mu.Lock()
-	h.stats.DomainsTotal += int64(len(b.NodesD))
-	h.stats.EdgesTotal += int64(len(b.Edges))
-	h.stats.IPsTotal += int64(len(b.NodesIP))
-	h.stats.CertsTotal += int64(len(b.NodesC))
-	h.ring[h.ringIdx] += int64(len(b.NodesD))
-	stats := h.stats
-	stats.DomainsPerSec = h.calcThroughput()
-	h.mu.Unlock()
-
-	// Build event
+	// Build event outside lock
 	domains := make([]string, len(b.NodesD))
 	for i, d := range b.NodesD {
 		domains[i] = d.Host
@@ -125,6 +121,16 @@ func (h *Hub) broadcast(b emit.Batch) {
 		certs[i] = CertInfo{SubjectCN: c.SubjectCN, IssuerCN: c.IssuerCN, SPKI: c.SPKI}
 	}
 
+	// Update stats and store history under single lock
+	h.mu.Lock()
+	h.stats.DomainsTotal += int64(len(b.NodesD))
+	h.stats.EdgesTotal += int64(len(b.Edges))
+	h.stats.IPsTotal += int64(len(b.NodesIP))
+	h.stats.CertsTotal += int64(len(b.NodesC))
+	h.ring[h.ringIdx] += int64(len(b.NodesD))
+	stats := h.stats
+	stats.DomainsPerSec = h.calcThroughput()
+
 	be := BatchEvent{
 		ProbeID:   b.ProbeID,
 		RunID:     b.RunID,
@@ -135,6 +141,13 @@ func (h *Hub) broadcast(b emit.Batch) {
 		Stats:     stats,
 		Timestamp: time.Now(),
 	}
+
+	h.history[h.historyIdx] = be
+	h.historyIdx = (h.historyIdx + 1) % historySize
+	if h.historyLen < historySize {
+		h.historyLen++
+	}
+	h.mu.Unlock()
 
 	payload, _ := json.Marshal(be)
 	ev := Event{
@@ -190,6 +203,27 @@ func (h *Hub) Unsubscribe(id int64) {
 		delete(h.subs, id)
 	}
 	h.mu.Unlock()
+}
+
+// GetHistory returns all stored batch events in chronological order.
+func (h *Hub) GetHistory() []BatchEvent {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if h.historyLen == 0 {
+		return nil
+	}
+
+	result := make([]BatchEvent, h.historyLen)
+	if h.historyLen < historySize {
+		// Haven't wrapped yet — entries are 0..historyLen-1
+		copy(result, h.history[:h.historyLen])
+	} else {
+		// Ring has wrapped — oldest is at historyIdx, read forward
+		n := copy(result, h.history[h.historyIdx:])
+		copy(result[n:], h.history[:h.historyIdx])
+	}
+	return result
 }
 
 // GetStats returns a snapshot of the current stats.
