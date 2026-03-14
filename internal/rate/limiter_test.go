@@ -7,7 +7,7 @@ import (
 )
 
 func TestPerHost_Allow(t *testing.T) {
-	limiter := New(10.0, 5) // 10 per second, burst of 5
+	limiter := New(10.0, 5, 10000, 5*time.Minute, 1*time.Hour) // 10 per second, burst of 5
 
 	// Test burst allowance
 	for i := 0; i < 5; i++ {
@@ -28,7 +28,7 @@ func TestPerHost_Allow(t *testing.T) {
 }
 
 func TestPerHost_Wait(t *testing.T) {
-	limiter := New(100.0, 1) // 100 per second, burst of 1
+	limiter := New(100.0, 1, 10000, 5*time.Minute, 1*time.Hour) // 100 per second, burst of 1
 
 	start := time.Now()
 	limiter.Wait("host1")
@@ -42,7 +42,7 @@ func TestPerHost_Wait(t *testing.T) {
 }
 
 func TestPerHost_Concurrent(t *testing.T) {
-	limiter := New(1000.0, 10)
+	limiter := New(1000.0, 10, 10000, 5*time.Minute, 1*time.Hour)
 	var wg sync.WaitGroup
 	allowed := 0
 	var mu sync.Mutex
@@ -72,7 +72,7 @@ func TestPerHost_Concurrent(t *testing.T) {
 }
 
 func TestPerHost_MultipleHosts(t *testing.T) {
-	limiter := New(10.0, 2)
+	limiter := New(10.0, 2, 10000, 5*time.Minute, 1*time.Hour)
 	hosts := []string{"host1", "host2", "host3"}
 
 	// Each host should get its own burst allowance
@@ -89,8 +89,46 @@ func TestPerHost_MultipleHosts(t *testing.T) {
 	}
 }
 
+func TestPerHost_SetRate(t *testing.T) {
+	limiter := New(10.0, 2, 10000, 5*time.Minute, 1*time.Hour)
+
+	// Use burst for host1
+	limiter.Allow("host1")
+	limiter.Allow("host1")
+	if limiter.Allow("host1") {
+		t.Error("expected Allow to return false after burst exhausted")
+	}
+
+	// Change rate and burst
+	limiter.SetRate(10.0, 5)
+
+	// New host should get new burst
+	for i := 0; i < 5; i++ {
+		if !limiter.Allow("host2") {
+			t.Errorf("expected Allow to return true for new rate burst request %d", i+1)
+		}
+	}
+}
+
+func TestPerHost_Stats(t *testing.T) {
+	limiter := New(10.0, 5, 10000, 5*time.Minute, 1*time.Hour)
+	limiter.Allow("host1")
+	limiter.Allow("host2")
+
+	stats := limiter.Stats()
+	if len(stats) != 2 {
+		t.Errorf("expected 2 hosts in stats, got %d", len(stats))
+	}
+	if _, ok := stats["host1"]; !ok {
+		t.Error("expected host1 in stats")
+	}
+	if _, ok := stats["host2"]; !ok {
+		t.Error("expected host2 in stats")
+	}
+}
+
 func BenchmarkPerHost_Allow(b *testing.B) {
-	limiter := New(1000000.0, 1000000) // High limits to avoid blocking
+	limiter := New(1000000.0, 1000000, 10000, 5*time.Minute, 1*time.Hour) // High limits to avoid blocking
 
 	b.Run("SingleHost", func(b *testing.B) {
 		b.ResetTimer()

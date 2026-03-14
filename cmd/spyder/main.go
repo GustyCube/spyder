@@ -13,18 +13,22 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gustycube/spyder/internal/circuitbreaker"
 	"github.com/gustycube/spyder/internal/config"
 	"github.com/gustycube/spyder/internal/dashboard"
 	"github.com/gustycube/spyder/internal/dedup"
 	"github.com/gustycube/spyder/internal/discover"
 	"github.com/gustycube/spyder/internal/emit"
 	"github.com/gustycube/spyder/internal/health"
+	"github.com/gustycube/spyder/internal/httpclient"
 	"github.com/gustycube/spyder/internal/hub"
 	"github.com/gustycube/spyder/internal/logging"
 	"github.com/gustycube/spyder/internal/metrics"
 	"github.com/gustycube/spyder/internal/output"
 	"github.com/gustycube/spyder/internal/probe"
 	"github.com/gustycube/spyder/internal/queue"
+	"github.com/gustycube/spyder/internal/rate"
+	"github.com/gustycube/spyder/internal/robots"
 	"github.com/gustycube/spyder/internal/store"
 	"github.com/gustycube/spyder/internal/telemetry"
 )
@@ -207,6 +211,19 @@ func main() {
 		}
 	}
 
+	// Map CLI-only flags to config
+	cfg.Crawling.Continuous = continuous
+	if maxDomains > 0 {
+		cfg.Crawling.MaxDomains = int(maxDomains)
+	}
+	cfg.Dashboard.Enabled = enableDashboard
+	if mongoURI != "" {
+		cfg.MongoDB.URI = mongoURI
+	}
+	if mongoDB != "spyder" {
+		cfg.MongoDB.Database = mongoDB
+	}
+
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		log.Fatal("invalid configuration", "err", err)
@@ -277,43 +294,45 @@ func main() {
 
 	// Initialize database store (optional)
 	var batchStore emit.BatchStore
-	if mongoURI != "" {
-		ms, err := store.NewMongo(ctx, mongoURI, mongoDB, log)
+	if cfg.MongoDB.URI != "" {
+		ms, err := store.NewMongo(ctx, cfg.MongoDB.URI, cfg.MongoDB.Database, log)
 		if err != nil {
 			log.Fatal("mongodb init", "err", err)
 		}
 		defer ms.Close(context.Background())
 		batchStore = ms
-		log.Info("mongodb storage enabled", "uri", mongoURI, "db", mongoDB)
+		log.Info("mongodb storage enabled", "uri", cfg.MongoDB.URI, "db", cfg.MongoDB.Database)
 	}
 
 	// Initialize emitter
-	emitterBatches := make(chan emit.Batch, 1024)
-	emitter, err := emit.NewEmitter(
-		cfg.Output.Ingest,
-		cfg.Probe,
-		cfg.Run,
-		cfg.Batch.MaxEdges,
-		cfg.Batch.FlushInterval.Unwrap(),
-		cfg.Output.SpoolDir,
-		cfg.MTLS.Cert,
-		cfg.MTLS.Key,
-		cfg.MTLS.CA,
-		stdoutWriter,
-		batchStore,
-	)
+	emitterBatches := make(chan emit.Batch, cfg.Batch.ChannelBuffer)
+	emitter, err := emit.NewEmitter(emit.EmitterConfig{
+		Ingest:             cfg.Output.Ingest,
+		ProbeID:            cfg.Probe,
+		RunID:              cfg.Run,
+		BatchMaxEdges:      cfg.Batch.MaxEdges,
+		FlushEvery:         cfg.Batch.FlushInterval.Unwrap(),
+		NodeThresholdRatio: cfg.Batch.NodeThresholdRatio,
+		SpoolDir:           cfg.Output.SpoolDir,
+		MTLSCert:           cfg.MTLS.Cert,
+		MTLSKey:            cfg.MTLS.Key,
+		MTLSCA:             cfg.MTLS.CA,
+		RetryMaxElapsed:    cfg.Retry.MaxElapsedTime.Unwrap(),
+		StdoutWriter:       stdoutWriter,
+		Store:              batchStore,
+	})
 	if err != nil {
 		log.Fatal("emitter init", "err", err)
 	}
 	go emitter.Run(ctx, emitterBatches, log)
 
 	// Initialize event hub (fans out batches to emitter + dashboard SSE)
-	batches := make(chan emit.Batch, 1024)
-	eventHub := hub.New(batches, emitterBatches)
+	batches := make(chan emit.Batch, cfg.Batch.ChannelBuffer)
+	eventHub := hub.New(batches, emitterBatches, cfg.Dashboard.HistorySize)
 	go eventHub.Run(ctx, log)
 
 	// Register dashboard routes and start metrics server
-	if enableDashboard {
+	if cfg.Dashboard.Enabled {
 		dashHandler := dashboard.NewHandler(eventHub, log)
 		dashHandler.RegisterRoutes(mux)
 		log.Info("dashboard enabled", "url", "http://localhost"+cfg.Telemetry.MetricsAddr)
@@ -323,19 +342,44 @@ func main() {
 		log.Info("metrics and health server started", "addr", cfg.Telemetry.MetricsAddr)
 	}
 
+	// Initialize rate limiter
+	ratelim := rate.New(cfg.Crawling.RatePerHost, cfg.Crawling.RateBurst, 10000, 5*time.Minute, 1*time.Hour)
+
+	// Initialize HTTP client with circuit breaker
+	hc := httpclient.NewResilientClient(
+		httpclient.ClientConfig{
+			Timeout:               cfg.HTTPClient.Timeout.Unwrap(),
+			ResponseHeaderTimeout: cfg.HTTPClient.ResponseHeaderTimeout.Unwrap(),
+			IdleConnTimeout:       cfg.HTTPClient.IdleConnTimeout.Unwrap(),
+			MaxIdleConns:          cfg.HTTPClient.MaxIdleConns,
+			MaxConnsPerHost:       cfg.HTTPClient.MaxConnsPerHost,
+		},
+		circuitbreaker.Config{
+			MaxRequests:  cfg.CircuitBreaker.MaxRequests,
+			Interval:     cfg.CircuitBreaker.Interval.Unwrap(),
+			Timeout:      cfg.CircuitBreaker.Timeout.Unwrap(),
+			Threshold:    cfg.CircuitBreaker.Threshold,
+			FailureRatio: cfg.CircuitBreaker.FailureRatio,
+		},
+	)
+
+	// Initialize robots cache with a plain HTTP client
+	robotsClient := &http.Client{Timeout: cfg.HTTPClient.Timeout.Unwrap()}
+	rob := robots.NewCache(robotsClient, cfg.UA, cfg.Robots.CacheSize, cfg.Robots.CacheTTL.Unwrap())
+
 	// Initialize task queue and discovery sink
 	tasks := make(chan string, 8192)
 	var sink discover.Sink
 
 	if cfg.Redis.QueueAddr != "" {
 		log.Info("redis queue enabled", "addr", cfg.Redis.QueueAddr, "key", cfg.Redis.QueueKey)
-		q, err := queue.NewRedis(cfg.Redis.QueueAddr, cfg.Redis.QueueKey, 120*time.Second)
+		q, err := queue.NewRedis(cfg.Redis.QueueAddr, cfg.Redis.QueueKey, cfg.Redis.QueueLeaseTTL.Unwrap())
 		if err != nil {
 			log.Fatal("redis queue init", "err", err)
 		}
-		if continuous {
-			sink = discover.NewRedisSink(q, d, maxDomains)
-			log.Info("continuous mode enabled (redis)", "max_domains", maxDomains)
+		if cfg.Crawling.Continuous {
+			sink = discover.NewRedisSink(q, d, int64(cfg.Crawling.MaxDomains))
+			log.Info("continuous mode enabled (redis)", "max_domains", cfg.Crawling.MaxDomains)
 		} else {
 			sink = discover.NoopSink{}
 		}
@@ -359,11 +403,11 @@ func main() {
 			}
 		}()
 	} else {
-		if continuous {
+		if cfg.Crawling.Continuous {
 			// In continuous mode, discovered domains feed back into tasks
 			discoveryCh := make(chan string, 8192)
-			sink = discover.NewChannelSink(discoveryCh, d, maxDomains)
-			log.Info("continuous mode enabled (in-memory)", "max_domains", maxDomains)
+			sink = discover.NewChannelSink(discoveryCh, d, int64(cfg.Crawling.MaxDomains))
+			log.Info("continuous mode enabled (in-memory)", "max_domains", cfg.Crawling.MaxDomains)
 
 			go func() {
 				defer close(tasks)
@@ -411,7 +455,7 @@ func main() {
 		"probe", cfg.Probe,
 		"run", cfg.Run,
 		"concurrency", cfg.Crawling.Concurrency,
-		"continuous", continuous,
+		"continuous", cfg.Crawling.Continuous,
 		"exclude_tlds", cfg.ExcludeTLDs,
 		"config_file", configFile,
 	)
@@ -420,9 +464,32 @@ func main() {
 	healthHandler.SetReady(true)
 	log.Info("service marked as ready")
 
-	// Start probe
-	p := probe.New(cfg.UA, cfg.Probe, cfg.Run, cfg.ExcludeTLDs, d, sink, batches, log)
-	p.Run(ctx, tasks, cfg.Crawling.Concurrency)
+	// Build probe
+	probeCfg := probe.ProbeConfig{
+		UA:           cfg.UA,
+		ProbeID:      cfg.Probe,
+		RunID:        cfg.Run,
+		ExcludeTLDs:  cfg.ExcludeTLDs,
+		HTTPTimeout:  cfg.Crawling.HTTPTimeout.Unwrap(),
+		TLSTimeout:   cfg.Crawling.TLSTimeout.Unwrap(),
+		BodyMaxBytes: cfg.Crawling.BodyMaxBytes,
+	}
+	p := probe.New(probeCfg, d, sink, batches, ratelim, hc, rob, log)
+
+	// Run workers inline (pool package will be added in Task 4)
+	done := make(chan struct{})
+	for i := 0; i < cfg.Crawling.Concurrency; i++ {
+		go func() {
+			for host := range tasks {
+				p.CrawlOne(ctx, host)
+				metrics.TasksTotal.WithLabelValues("ok").Inc()
+			}
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < cfg.Crawling.Concurrency; i++ {
+		<-done
+	}
 
 	// Wait for emitter to drain
 	emitter.Drain(log)

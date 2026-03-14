@@ -56,17 +56,6 @@ type Config struct {
 	OnStateChange func(from, to State)
 }
 
-// DefaultConfig returns a default configuration
-func DefaultConfig() *Config {
-	return &Config{
-		MaxRequests:  1,
-		Interval:     60 * time.Second,
-		Timeout:      60 * time.Second,
-		Threshold:    10,
-		FailureRatio: 0.5,
-	}
-}
-
 // CircuitBreaker implements the circuit breaker pattern
 type CircuitBreaker struct {
 	config *Config
@@ -85,12 +74,8 @@ type counts struct {
 	failures uint32
 }
 
-// New creates a new circuit breaker
+// New creates a new circuit breaker. Config must not be nil.
 func New(config *Config) *CircuitBreaker {
-	if config == nil {
-		config = DefaultConfig()
-	}
-
 	if config.MaxRequests == 0 {
 		config.MaxRequests = 1
 	}
@@ -260,11 +245,8 @@ type HostBreaker struct {
 	config   *Config
 }
 
-// NewHostBreaker creates a new per-host circuit breaker
+// NewHostBreaker creates a new per-host circuit breaker. Config must not be nil.
 func NewHostBreaker(config *Config) *HostBreaker {
-	if config == nil {
-		config = DefaultConfig()
-	}
 	return &HostBreaker{
 		breakers: make(map[string]*CircuitBreaker),
 		config:   config,

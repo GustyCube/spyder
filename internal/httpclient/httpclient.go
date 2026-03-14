@@ -9,21 +9,13 @@ import (
 	"github.com/gustycube/spyder/internal/circuitbreaker"
 )
 
-func Default() *http.Client {
-	tr := &http.Transport{
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
-		DisableCompression:    false,
-		MaxIdleConns:          1024,
-		MaxConnsPerHost:       128,
-		MaxIdleConnsPerHost:   64,
-		ResponseHeaderTimeout: 10 * time.Second,
-		IdleConnTimeout:       30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-	return &http.Client{
-		Transport: tr,
-		Timeout:   15 * time.Second,
-	}
+// ClientConfig holds HTTP client transport and timeout settings.
+type ClientConfig struct {
+	Timeout               time.Duration
+	ResponseHeaderTimeout time.Duration
+	IdleConnTimeout       time.Duration
+	MaxIdleConns          int
+	MaxConnsPerHost       int
 }
 
 // ResilientClient wraps http.Client with circuit breaker functionality
@@ -32,23 +24,28 @@ type ResilientClient struct {
 	hostBreaker *circuitbreaker.HostBreaker
 }
 
-// NewResilientClient creates a new HTTP client with circuit breaker
-func NewResilientClient(client *http.Client) *ResilientClient {
-	if client == nil {
-		client = Default()
+// NewResilientClient creates a new HTTP client with circuit breaker.
+// It builds the underlying *http.Client and *http.Transport from cfg,
+// and creates a per-host circuit breaker from cbCfg.
+func NewResilientClient(cfg ClientConfig, cbCfg circuitbreaker.Config) *ResilientClient {
+	tr := &http.Transport{
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
+		DisableCompression:    false,
+		MaxIdleConns:          cfg.MaxIdleConns,
+		MaxConnsPerHost:       cfg.MaxConnsPerHost,
+		MaxIdleConnsPerHost:   cfg.MaxIdleConns / 16, // reasonable default
+		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
+		IdleConnTimeout:       cfg.IdleConnTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
-
-	config := &circuitbreaker.Config{
-		MaxRequests:  3,
-		Interval:     60 * time.Second,
-		Timeout:      30 * time.Second,
-		Threshold:    5,
-		FailureRatio: 0.6,
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   cfg.Timeout,
 	}
 
 	return &ResilientClient{
 		client:      client,
-		hostBreaker: circuitbreaker.NewHostBreaker(config),
+		hostBreaker: circuitbreaker.NewHostBreaker(&cbCfg),
 	}
 }
 
@@ -63,22 +60,22 @@ func (c *ResilientClient) Do(req *http.Request) (*http.Response, error) {
 	err := c.hostBreaker.Execute(host, func() error {
 		var err error
 		resp, err = c.client.Do(req)
-		
+
 		// Consider 5xx errors and connection errors as failures
 		if err != nil {
 			return err
 		}
-		
+
 		if resp.StatusCode >= 500 {
 			return &HTTPError{
 				StatusCode: resp.StatusCode,
 				Status:     resp.Status,
 			}
 		}
-		
+
 		return nil
 	})
-	
+
 	return resp, err
 }
 

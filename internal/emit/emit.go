@@ -30,10 +30,10 @@ const (
 
 // Dedup key prefix constants
 const (
-	DedupNodeIP  = "nodeip|"
-	DedupDomain  = "domain|"
-	DedupCert    = "cert|"
-	DedupEdge    = "edge|"
+	DedupNodeIP = "nodeip|"
+	DedupDomain = "domain|"
+	DedupCert   = "cert|"
+	DedupEdge   = "edge|"
 )
 
 type Edge struct {
@@ -85,67 +85,100 @@ type BatchStore interface {
 	WriteBatch(ctx context.Context, batch Batch) error
 }
 
-type Emitter struct {
-	ingest       string
-	probeID      string
-	runID        string
-	batchMax     int
-	flushEvery   time.Duration
-	spoolDir     string
-	client       *http.Client
-	stdoutWriter StdoutWriter
-	store        BatchStore
-	mu           sync.Mutex
-	acc          Batch
+// EmitterConfig holds all configuration for the Emitter.
+type EmitterConfig struct {
+	Ingest             string
+	ProbeID            string
+	RunID              string
+	BatchMaxEdges      int
+	FlushEvery         time.Duration
+	NodeThresholdRatio float64
+	SpoolDir           string
+	MTLSCert           string
+	MTLSKey            string
+	MTLSCA             string
+	RetryMaxElapsed    time.Duration
+	StdoutWriter       StdoutWriter
+	Store              BatchStore
 }
 
-func NewEmitter(ingest, probeID, runID string, batchMax int, flushEvery time.Duration, spoolDir, mtlsCert, mtlsKey, mtlsCA string, sw StdoutWriter, st BatchStore) (*Emitter, error) {
+type Emitter struct {
+	ingest             string
+	probeID            string
+	runID              string
+	batchMax           int
+	flushEvery         time.Duration
+	nodeThresholdRatio float64
+	retryMaxElapsed    time.Duration
+	spoolDir           string
+	client             *http.Client
+	stdoutWriter       StdoutWriter
+	store              BatchStore
+	mu                 sync.Mutex
+	acc                Batch
+}
+
+func NewEmitter(cfg EmitterConfig) (*Emitter, error) {
 	tlsCfg := &tls.Config{}
 
-	if mtlsCert != "" || mtlsKey != "" {
-		if mtlsCert == "" || mtlsKey == "" {
+	if cfg.MTLSCert != "" || cfg.MTLSKey != "" {
+		if cfg.MTLSCert == "" || cfg.MTLSKey == "" {
 			return nil, fmt.Errorf("both mtls_cert and mtls_key must be provided together")
 		}
-		cert, err := tls.LoadX509KeyPair(mtlsCert, mtlsKey)
+		cert, err := tls.LoadX509KeyPair(cfg.MTLSCert, cfg.MTLSKey)
 		if err != nil {
 			return nil, fmt.Errorf("loading mTLS keypair: %w", err)
 		}
 		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
 
-	if mtlsCA != "" {
-		caPEM, err := os.ReadFile(mtlsCA)
+	if cfg.MTLSCA != "" {
+		caPEM, err := os.ReadFile(cfg.MTLSCA)
 		if err != nil {
 			return nil, fmt.Errorf("reading mTLS CA bundle: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
-			return nil, fmt.Errorf("no valid certificates found in CA bundle: %s", mtlsCA)
+			return nil, fmt.Errorf("no valid certificates found in CA bundle: %s", cfg.MTLSCA)
 		}
 		tlsCfg.RootCAs = pool
 	}
 
-	_ = os.MkdirAll(spoolDir, 0o755)
+	_ = os.MkdirAll(cfg.SpoolDir, 0o755)
 	return &Emitter{
-		ingest: ingest, probeID: probeID, runID: runID,
-		batchMax: batchMax, flushEvery: flushEvery, spoolDir: spoolDir,
-		client:       &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}, Timeout: 20 * time.Second},
-		stdoutWriter: sw,
-		store:        st,
-		acc:          Batch{ProbeID: probeID, RunID: runID},
+		ingest:             cfg.Ingest,
+		probeID:            cfg.ProbeID,
+		runID:              cfg.RunID,
+		batchMax:           cfg.BatchMaxEdges,
+		flushEvery:         cfg.FlushEvery,
+		nodeThresholdRatio: cfg.NodeThresholdRatio,
+		retryMaxElapsed:    cfg.RetryMaxElapsed,
+		spoolDir:           cfg.SpoolDir,
+		client:             &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}, Timeout: 20 * time.Second},
+		stdoutWriter:       cfg.StdoutWriter,
+		store:              cfg.Store,
+		acc:                Batch{ProbeID: cfg.ProbeID, RunID: cfg.RunID},
 	}, nil
 }
 
 func (e *Emitter) Run(ctx context.Context, in <-chan Batch, log *zap.SugaredLogger) {
+	nodeThreshold := int(float64(e.batchMax) * e.nodeThresholdRatio)
 	t := time.NewTimer(e.flushEvery)
 	for {
 		select {
 		case b, ok := <-in:
-			if !ok { return }
+			if !ok {
+				return
+			}
 			e.append(b)
-			if len(e.acc.Edges) >= e.batchMax || (len(e.acc.NodesD)+len(e.acc.NodesIP)+len(e.acc.NodesC)) >= e.batchMax/2 {
+			if len(e.acc.Edges) >= e.batchMax || (len(e.acc.NodesD)+len(e.acc.NodesIP)+len(e.acc.NodesC)) >= nodeThreshold {
 				e.flush(ctx, log)
-				if !t.Stop() { select { case <-t.C: default: } }
+				if !t.Stop() {
+					select {
+					case <-t.C:
+					default:
+					}
+				}
 				t.Reset(e.flushEvery)
 			}
 		case <-t.C:
@@ -169,7 +202,9 @@ func (e *Emitter) append(b Batch) {
 func (e *Emitter) flush(ctx context.Context, log *zap.SugaredLogger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if len(e.acc.Edges)+len(e.acc.NodesD)+len(e.acc.NodesIP)+len(e.acc.NodesC) == 0 { return }
+	if len(e.acc.Edges)+len(e.acc.NodesD)+len(e.acc.NodesIP)+len(e.acc.NodesC) == 0 {
+		return
+	}
 	if e.ingest == "" {
 		if e.stdoutWriter != nil {
 			_ = e.stdoutWriter.WriteBatch(e.acc)
@@ -204,22 +239,29 @@ func (e *Emitter) post(ctx context.Context, b Batch) error {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := e.client.Do(req)
-		if err != nil { return err }
-		io.Copy(io.Discard, resp.Body); resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("bad status: %d", resp.StatusCode)
 		}
 		return nil
 	}
 	bo := backoff.NewExponentialBackOff()
-	bo.MaxElapsedTime = 30 * time.Second
+	bo.MaxElapsedTime = e.retryMaxElapsed
 	return backoff.Retry(op, backoff.WithContext(bo, ctx))
 }
 
 func (e *Emitter) spool(b Batch, log *zap.SugaredLogger) {
 	name := time.Now().UTC().Format("20060102T150405.000000000") + ".json"
 	path := filepath.Join(e.spoolDir, name)
-	f, err := os.Create(path); if err != nil { log.Error("spool create", "err", err); return }
+	f, err := os.Create(path)
+	if err != nil {
+		log.Error("spool create", "err", err)
+		return
+	}
 	defer f.Close()
 	_ = json.NewEncoder(f).Encode(b)
 }
@@ -230,13 +272,30 @@ func (e *Emitter) Drain(log *zap.SugaredLogger) {
 	entries, _ := os.ReadDir(e.spoolDir)
 	for _, ent := range entries {
 		p := filepath.Join(e.spoolDir, ent.Name())
-		f, err := os.Open(p); if err != nil { continue }
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
 		var b Batch
 		if err := json.NewDecoder(f).Decode(&b); err == nil {
 			if e.ingest == "" || e.post(context.Background(), b) == nil {
-				_ = f.Close(); _ = os.Remove(p); continue
+				_ = f.Close()
+				_ = os.Remove(p)
+				continue
 			}
 		}
 		_ = f.Close()
 	}
+}
+
+// PendingStats returns the number of pending edges and nodes in the accumulator.
+func (e *Emitter) PendingStats() (edges, nodes int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.acc.Edges), len(e.acc.NodesD) + len(e.acc.NodesIP) + len(e.acc.NodesC)
+}
+
+// ForceFlush flushes the current accumulator immediately.
+func (e *Emitter) ForceFlush(ctx context.Context, log *zap.SugaredLogger) {
+	e.flush(ctx, log)
 }

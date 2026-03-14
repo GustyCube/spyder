@@ -46,8 +46,6 @@ type Stats struct {
 	DomainsPerSec float64 `json:"domains_per_sec"`
 }
 
-const historySize = 500
-
 // Hub fans out emit.Batch from the probe to both the emitter and SSE subscribers.
 type Hub struct {
 	in  <-chan emit.Batch
@@ -60,7 +58,7 @@ type Hub struct {
 	stats Stats
 
 	// history ring buffer of recent BatchEvents for late-joining clients
-	history    [historySize]BatchEvent
+	history    []BatchEvent
 	historyLen int
 	historyIdx int
 
@@ -70,11 +68,12 @@ type Hub struct {
 }
 
 // New creates a hub that reads from in and forwards to out.
-func New(in <-chan emit.Batch, out chan<- emit.Batch) *Hub {
+func New(in <-chan emit.Batch, out chan<- emit.Batch, historySize int) *Hub {
 	return &Hub{
-		in:   in,
-		out:  out,
-		subs: make(map[int64]chan Event),
+		in:      in,
+		out:     out,
+		subs:    make(map[int64]chan Event),
+		history: make([]BatchEvent, historySize),
 	}
 }
 
@@ -107,6 +106,8 @@ func (h *Hub) Run(ctx context.Context, log *zap.SugaredLogger) {
 }
 
 func (h *Hub) broadcast(b emit.Batch) {
+	historySize := len(h.history)
+
 	// Build event outside lock
 	domains := make([]string, len(b.NodesD))
 	for i, d := range b.NodesD {
@@ -209,6 +210,8 @@ func (h *Hub) Unsubscribe(id int64) {
 func (h *Hub) GetHistory() []BatchEvent {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+
+	historySize := len(h.history)
 
 	if h.historyLen == 0 {
 		return nil

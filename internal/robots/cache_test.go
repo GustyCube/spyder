@@ -21,7 +21,7 @@ func TestCache_Get(t *testing.T) {
 	defer server.Close()
 
 	client := &http.Client{Timeout: 2 * time.Second}
-	cache := NewCache(client, "TestBot/1.0")
+	cache := NewCache(client, "TestBot/1.0", 4096, 24*time.Hour)
 	ctx := context.Background()
 
 	// Extract host from test server URL
@@ -53,7 +53,7 @@ func TestCache_Get_404(t *testing.T) {
 	defer server.Close()
 
 	client := &http.Client{Timeout: 2 * time.Second}
-	cache := NewCache(client, "TestBot/1.0")
+	cache := NewCache(client, "TestBot/1.0", 4096, 24*time.Hour)
 	ctx := context.Background()
 
 	host := server.URL[7:] // Remove "http://"
