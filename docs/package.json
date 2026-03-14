@@ -10,5 +10,9 @@
   },
   "devDependencies": {
     "vitepress": "1.6.4"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1",
+    "vitepress-openapi": "^0.1.17"
   }
 }
