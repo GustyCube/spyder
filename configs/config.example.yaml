@@ -1,9 +1,254 @@
+# SPYDER probe configuration
+# Copy this file to config.yaml and adjust as needed.
+# All duration values accept Go duration strings: "15s", "2m", "24h", etc.
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+
+# Path to the input domains file (one hostname per line, required).
+domains: domains.txt
+
+# Stable identifier for this probe instance. Shows up in output edges.
 probe: local-1
+
+# Run identifier. Auto-generated as run-<unix_timestamp> if omitted.
+# run: run-1741824000
+
+# User-agent sent on every HTTP request.
 ua: "SPYDERProbe/1.0 (+https://github.com/gustycube/spyder)"
-exclude_tlds: ["gov","mil","int"]
-concurrency: 256
-metrics_addr: ":9090"
-batch_max_edges: 10000
-batch_flush_sec: 2
-spool_dir: "spool"
-ingest: ""
+
+# TLDs to skip entirely. Domains ending in these TLDs are never queued.
+# Default: ["gov", "mil", "int"]
+exclude_tlds:
+  - gov
+  - mil
+  - int
+
+# ── Crawling ──────────────────────────────────────────────────────────────────
+
+crawling:
+  # Number of concurrent crawl workers.
+  # Hot-reloadable (Tier 1). Default: 256
+  concurrency: 256
+
+  # Maximum number of unique domains to discover before stopping.
+  # 0 means unlimited. Hot-reloadable (Tier 1). Default: 0
+  max_domains: 0
+
+  # If true, keep crawling newly discovered domains even after max_domains
+  # is reached (only meaningful when max_domains > 0). Default: false
+  continuous: false
+
+  # Per-host request rate in requests per second.
+  # Hot-reloadable (Tier 1). Default: 1.0
+  rate_per_host: 1.0
+
+  # Per-host burst size for the token bucket. Default: 1
+  rate_burst: 1
+
+  # HTTP request timeout for crawl workers. Default: 15s
+  http_timeout: 15s
+
+  # TLS handshake timeout. Default: 8s
+  tls_timeout: 8s
+
+  # Maximum response body bytes to read. Default: 524288 (512 KiB)
+  body_max_bytes: 524288
+
+# ── Batch output ──────────────────────────────────────────────────────────────
+
+batch:
+  # Maximum edges to accumulate before flushing a batch.
+  # Hot-reloadable (Tier 1). Default: 10000
+  max_edges: 10000
+
+  # How often to flush a partial batch regardless of size. Default: 2s
+  flush_interval: 2s
+
+  # Flush when node count reaches this fraction of max_edges. Default: 0.5
+  node_threshold_ratio: 0.5
+
+  # Size of the internal channel buffer between workers and the emitter. Default: 1024
+  channel_buffer: 1024
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+output:
+  # Output format when writing to stdout. Options: json, ndjson. Default: json
+  # Tier 2 hot-reloadable (applied with warning).
+  format: json
+
+  # HTTP endpoint for batch delivery. Leave empty to write to stdout.
+  # Tier 2 hot-reloadable (applied with warning).
+  ingest: ""
+
+  # Directory for spooling failed batches to disk for later retry.
+  # Tier 2 hot-reloadable (applied with warning). Default: spool
+  spool_dir: spool
+
+# ── HTTP client ───────────────────────────────────────────────────────────────
+
+http_client:
+  # Overall request timeout (includes connect + TLS + body). Default: 15s
+  timeout: 15s
+
+  # Maximum time waiting for the server to return response headers. Default: 10s
+  response_header_timeout: 10s
+
+  # How long idle keep-alive connections stay in the pool. Default: 30s
+  idle_conn_timeout: 30s
+
+  # Maximum number of idle connections across all hosts. Default: 1024
+  max_idle_conns: 1024
+
+  # Maximum simultaneous connections per host. Default: 128
+  max_conns_per_host: 128
+
+# ── Circuit breaker ───────────────────────────────────────────────────────────
+
+circuit_breaker:
+  # Number of requests allowed through while the breaker is half-open. Default: 3
+  max_requests: 3
+
+  # Counting window. Failures older than this are forgotten. Default: 60s
+  interval: 60s
+
+  # How long the breaker stays open before moving to half-open. Default: 30s
+  timeout: 30s
+
+  # Minimum number of failures before the ratio is evaluated. Default: 5
+  threshold: 5
+
+  # Failure ratio threshold (0.0–1.0) that trips the breaker. Default: 0.6
+  failure_ratio: 0.6
+
+# ── Robots.txt cache ─────────────────────────────────────────────────────────
+
+robots:
+  # Maximum number of robots.txt responses to cache. Default: 4096
+  cache_size: 4096
+
+  # How long a cached robots.txt entry is considered fresh. Default: 24h
+  cache_ttl: 24h
+
+# ── Deduplication ─────────────────────────────────────────────────────────────
+
+dedup:
+  # How long a seen-key lives before expiring. Default: 24h
+  # Use Redis for persistent dedup across restarts (see redis section below).
+  ttl: 24h
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+# Required only when using Redis-backed dedup or distributed task queue.
+# Tier 3: changing these fields requires a restart.
+
+redis:
+  # Redis address for the dedup store. Leave empty to use in-process memory dedup.
+  addr: ""
+
+  # Redis address for the distributed task queue. Leave empty to use the local
+  # in-process queue (single-probe mode).
+  queue_addr: ""
+
+  # Redis key for the distributed task queue. Default: spyder:queue
+  queue_key: spyder:queue
+
+  # Lease TTL for distributed queue items. Default: 2m
+  queue_lease_ttl: 2m
+
+# ── MongoDB ───────────────────────────────────────────────────────────────────
+# Optional persistent storage for discovered graph nodes and edges.
+# Tier 3: changing these fields requires a restart.
+
+mongodb:
+  # MongoDB connection URI. Leave empty to disable MongoDB output.
+  uri: ""
+
+  # Database name. Default: spyder
+  database: spyder
+
+# ── mTLS ──────────────────────────────────────────────────────────────────────
+# Optional mutual TLS for authenticating with the ingest endpoint.
+# Tier 3: changing these fields requires a restart.
+
+mtls:
+  # Path to the client certificate PEM file.
+  cert: ""
+
+  # Path to the client private key PEM file.
+  key: ""
+
+  # Path to the CA bundle PEM file used to verify the ingest server.
+  ca: ""
+
+# ── Retry ─────────────────────────────────────────────────────────────────────
+
+retry:
+  # Maximum total time to spend retrying a failed ingest POST. Default: 30s
+  max_elapsed_time: 30s
+
+# ── Telemetry ─────────────────────────────────────────────────────────────────
+# Tier 3 (metrics_addr): changing the listen address requires a restart.
+
+telemetry:
+  # Address for the Prometheus /metrics endpoint and REST control API. Default: :9090
+  metrics_addr: ":9090"
+
+  # OpenTelemetry OTLP gRPC endpoint. Leave empty to disable tracing.
+  otel_endpoint: ""
+
+  # Skip TLS verification when connecting to the OTLP endpoint. Default: true
+  otel_insecure: true
+
+  # Service name reported in traces. Default: spyder-probe
+  otel_service: spyder-probe
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+dashboard:
+  # Enable the in-memory stats dashboard. Default: true
+  enabled: true
+
+  # Number of batch events to retain in history. Tier 3. Default: 500
+  history_size: 500
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+logging:
+  # Log level: debug, info, warn, error. Hot-reloadable (Tier 1). Default: info
+  level: info
+
+  # Suppress all log output except fatal errors. Default: false
+  quiet: false
+
+  # Enable verbose (debug-equivalent) log output. Default: false
+  verbose: false
+
+  # Show progress indicators in the terminal. Default: true
+  progress: true
+
+# ── API ───────────────────────────────────────────────────────────────────────
+# Control API authentication and rate limiting.
+# The API listens on telemetry.metrics_addr alongside /metrics and /health.
+
+api:
+  # Global API rate limit in requests per second. Hot-reloadable (Tier 1). Default: 100
+  rate_limit: 100
+
+  # Token bucket burst size. Hot-reloadable (Tier 1). Default: 20
+  rate_burst: 20
+
+  # API keys. Each key must have a unique token, a name, and a scope.
+  # Scopes: read < write < admin (each includes all permissions of the level below).
+  # Generate tokens with: python3 -c "import secrets; print('spyder_'+secrets.token_hex(32))"
+  #
+  # Keys can also be supplied via SPYDER_API_KEYS (base64-encoded JSON array)
+  # to keep secrets out of this file. See docs/api/authentication.md.
+  keys: []
+  # Example:
+  # keys:
+  #   - key: spyder_0000000000000000000000000000000000000000000000000000000000000001
+  #     name: ops-team
+  #     scope: admin
+  #   - key: spyder_0000000000000000000000000000000000000000000000000000000000000002
+  #     name: dashboard-ro
+  #     scope: read
