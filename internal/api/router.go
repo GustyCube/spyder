@@ -80,6 +80,11 @@ func NewServer(
 	}
 }
 
+// SetAPIRate updates the API rate limiter settings.
+func (s *Server) SetAPIRate(ratePerSec, burst int) {
+	s.apiRL.SetRate(ratePerSec, burst)
+}
+
 // RegisterRoutes registers all API routes on the given mux.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Middleware helpers

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gustycube/spyder/internal/api"
 	"github.com/gustycube/spyder/internal/circuitbreaker"
 	"github.com/gustycube/spyder/internal/config"
 	"github.com/gustycube/spyder/internal/dashboard"
@@ -25,6 +26,7 @@ import (
 	"github.com/gustycube/spyder/internal/logging"
 	"github.com/gustycube/spyder/internal/metrics"
 	"github.com/gustycube/spyder/internal/output"
+	"github.com/gustycube/spyder/internal/pool"
 	"github.com/gustycube/spyder/internal/probe"
 	"github.com/gustycube/spyder/internal/queue"
 	"github.com/gustycube/spyder/internal/rate"
@@ -476,20 +478,71 @@ func main() {
 	}
 	p := probe.New(probeCfg, d, sink, batches, ratelim, hc, rob, log)
 
-	// Run workers inline (pool package will be added in Task 4)
-	done := make(chan struct{})
-	for i := 0; i < cfg.Crawling.Concurrency; i++ {
+	// Create dynamic worker pool
+	wp := pool.New(ctx, tasks, func(ctx context.Context, host string) {
+		p.CrawlOne(ctx, host)
+		metrics.TasksTotal.WithLabelValues("ok").Inc()
+	})
+	wp.Scale(cfg.Crawling.Concurrency)
+
+	// Create RuntimeConfig for hot reload
+	runtimeCfg := config.NewRuntimeConfig(*cfg)
+
+	// Create API key store
+	keyStore := api.NewKeyStore(cfg.API.Keys)
+
+	// Create query store
+	queryStore := api.NewMemoryQueryStore(eventHub)
+
+	// Create API server
+	apiServer := api.NewServer(
+		runtimeCfg, wp, eventHub, emitter, d, sink, ratelim, hc, rob,
+		keyStore, queryStore, healthHandler, log, cancel, tasks,
+	)
+	apiServer.RegisterRoutes(mux)
+
+	// Register OnChange callbacks for runtime config updates
+	runtimeCfg.OnChange(func(old, new_ config.Config) {
+		if old.UA != new_.UA {
+			p.SetUA(new_.UA)
+			rob.SetUA(new_.UA)
+			log.Info("updated user-agent", "ua", new_.UA)
+		}
+		if len(old.ExcludeTLDs) != len(new_.ExcludeTLDs) || fmt.Sprintf("%v", old.ExcludeTLDs) != fmt.Sprintf("%v", new_.ExcludeTLDs) {
+			p.SetExcludeTLDs(new_.ExcludeTLDs)
+			log.Info("updated exclude TLDs", "tlds", new_.ExcludeTLDs)
+		}
+		if old.Crawling.RatePerHost != new_.Crawling.RatePerHost || old.Crawling.RateBurst != new_.Crawling.RateBurst {
+			ratelim.SetRate(new_.Crawling.RatePerHost, new_.Crawling.RateBurst)
+			log.Info("updated rate limits", "rate", new_.Crawling.RatePerHost, "burst", new_.Crawling.RateBurst)
+		}
+		if old.API.RateLimit != new_.API.RateLimit || old.API.RateBurst != new_.API.RateBurst {
+			apiServer.SetAPIRate(new_.API.RateLimit, new_.API.RateBurst)
+			log.Info("updated API rate limits", "rate", new_.API.RateLimit, "burst", new_.API.RateBurst)
+		}
+	})
+
+	// SIGHUP handler for config file reload
+	if configFile != "" {
+		sighup := make(chan os.Signal, 1)
+		signal.Notify(sighup, syscall.SIGHUP)
 		go func() {
-			for host := range tasks {
-				p.CrawlOne(ctx, host)
-				metrics.TasksTotal.WithLabelValues("ok").Inc()
+			for range sighup {
+				log.Info("received SIGHUP, reloading config", "file", configFile)
+				if err := runtimeCfg.ReloadFromFile(configFile); err != nil {
+					log.Error("config reload failed", "err", err)
+				} else {
+					// Reload API keys
+					newCfg := runtimeCfg.Get()
+					keyStore.Reload(newCfg.API.Keys)
+					log.Info("config reloaded successfully")
+				}
 			}
-			done <- struct{}{}
 		}()
 	}
-	for i := 0; i < cfg.Crawling.Concurrency; i++ {
-		<-done
-	}
+
+	// Wait for workers to finish
+	wp.Wait()
 
 	// Wait for emitter to drain
 	emitter.Drain(log)
