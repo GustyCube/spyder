@@ -90,6 +90,7 @@
     "/api/v1/domains": {
       "post": {
         "summary": "Submit a single domain for crawling",
+        "description": "Enqueues a single domain hostname into the crawl task channel. The domain will be picked up by the next available worker. Returns 503 if the task channel is full.",
         "operationId": "submitDomain",
         "tags": [
           "Control"
@@ -156,6 +157,7 @@
     "/api/v1/domains/bulk": {
       "post": {
         "summary": "Submit multiple domains for crawling",
+        "description": "Enqueues multiple domains at once. Accepts JSON array or newline-delimited text/plain. Domains that cannot be enqueued (channel full) are counted as rejected.",
         "operationId": "submitDomainsBulk",
         "tags": [
           "Control"
@@ -229,6 +231,7 @@
     "/api/v1/control/pause": {
       "post": {
         "summary": "Pause all crawl workers",
+        "description": "Pauses all workers in the pool. Workers finish their current task but do not pick up new ones until resumed.",
         "operationId": "pauseCrawl",
         "tags": [
           "Control"
@@ -266,6 +269,7 @@
     "/api/v1/control/resume": {
       "post": {
         "summary": "Resume paused crawl workers",
+        "description": "Resumes all paused workers so they begin pulling tasks from the queue again.",
         "operationId": "resumeCrawl",
         "tags": [
           "Control"
@@ -303,6 +307,7 @@
     "/api/v1/control/stop": {
       "post": {
         "summary": "Gracefully stop the probe process",
+        "description": "Initiates a graceful shutdown of the entire SPYDER process by cancelling the root context. The response is sent before shutdown begins.",
         "operationId": "stopCrawl",
         "tags": [
           "Control"
@@ -346,6 +351,7 @@
     "/api/v1/config": {
       "get": {
         "summary": "Get the current runtime configuration snapshot",
+        "description": "Returns the full current runtime configuration as a JSON object, including all nested sections (crawling, batch, output, etc.).",
         "operationId": "getConfig",
         "tags": [
           "Config"
@@ -375,7 +381,7 @@
       },
       "patch": {
         "summary": "Hot-patch runtime configuration",
-        "description": "Applies a partial configuration update. Only provided fields are changed.\n\n- **Tier 1** fields are applied immediately and safely.\n- **Tier 2** fields are applied with warnings (e.g. changing output format mid-run).\n- **Tier 3** fields (e.g. `redis.addr`, `mongodb.uri`) are **rejected** — the probe\n  must be restarted to apply them.\n",
+        "description": "Applies a partial configuration update. Tier 1 fields are applied immediately, Tier 2 fields produce warnings, and Tier 3 fields (e.g. Redis, mTLS) are rejected as they require a restart.",
         "operationId": "patchConfig",
         "tags": [
           "Config"
@@ -439,6 +445,7 @@
     "/api/v1/stats": {
       "get": {
         "summary": "Get aggregate crawl statistics",
+        "description": "Returns aggregate hub statistics including total batches processed, edges, domains, IPs, and certificates seen.",
         "operationId": "getStats",
         "tags": [
           "Stats"
@@ -467,6 +474,7 @@
     "/api/v1/stats/history": {
       "get": {
         "summary": "Get batch event history",
+        "description": "Returns the recent batch history ring buffer from the hub, ordered newest first.",
         "operationId": "getStatsHistory",
         "tags": [
           "Stats"
@@ -498,6 +506,7 @@
     "/api/v1/status": {
       "get": {
         "summary": "Get high-level probe status",
+        "description": "Returns a combined status snapshot including uptime, worker pool state, pending emitter counts, and discovery progress.",
         "operationId": "getStatus",
         "tags": [
           "Stats"
@@ -549,6 +558,7 @@
     "/api/v1/workers": {
       "get": {
         "summary": "Get worker pool statistics",
+        "description": "Returns the current worker pool statistics: target count, active count, and paused state.",
         "operationId": "getWorkers",
         "tags": [
           "Workers"
@@ -577,6 +587,7 @@
     "/api/v1/workers/scale": {
       "post": {
         "summary": "Scale the worker pool to a target count",
+        "description": "Dynamically scales the worker pool to the specified count. Workers are added or drained gracefully.",
         "operationId": "scaleWorkers",
         "tags": [
           "Workers"
@@ -637,6 +648,7 @@
     "/api/v1/breakers": {
       "get": {
         "summary": "List all circuit breaker states",
+        "description": "Returns circuit breaker state for all known hosts, including current state (closed/open/half-open) and failure counts.",
         "operationId": "getBreakers",
         "tags": [
           "Breakers"
@@ -668,6 +680,7 @@
     "/api/v1/breakers/reset": {
       "post": {
         "summary": "Reset all circuit breakers",
+        "description": "Resets all circuit breakers to the closed state, allowing requests to resume to previously-failing hosts.",
         "operationId": "resetAllBreakers",
         "tags": [
           "Breakers"
@@ -706,6 +719,7 @@
     "/api/v1/breakers/{host}/reset": {
       "post": {
         "summary": "Reset a single circuit breaker by host",
+        "description": "Resets the circuit breaker for a specific host back to the closed state.",
         "operationId": "resetBreaker",
         "tags": [
           "Breakers"
@@ -748,6 +762,7 @@
     "/api/v1/ratelimits": {
       "get": {
         "summary": "Get per-host rate limit configuration and active hosts",
+        "description": "Returns the global per-host rate limit configuration and per-host limiter statistics.",
         "operationId": "getRateLimits",
         "tags": [
           "RateLimits"
@@ -794,6 +809,7 @@
       },
       "put": {
         "summary": "Update global per-host rate limit settings",
+        "description": "Updates the global per-host rate limit and burst values. Also patches the runtime config to persist the change.",
         "operationId": "setRateLimits",
         "tags": [
           "RateLimits"
@@ -854,6 +870,7 @@
     "/api/v1/ratelimits/{host}/reset": {
       "post": {
         "summary": "Notify that a per-host rate limiter will expire via TTL",
+        "description": "Per-host rate limiter entries expire automatically via TTL and cannot be individually reset.",
         "operationId": "resetRateLimit",
         "tags": [
           "RateLimits"
@@ -895,6 +912,7 @@
     "/api/v1/dedup/{key}": {
       "get": {
         "summary": "Check whether a dedup key has been seen",
+        "description": "Checks whether a given deduplication key has been seen. The call itself marks the key as seen (side effect of the Seen() method).",
         "operationId": "checkDedup",
         "tags": [
           "Dedup"
@@ -943,6 +961,7 @@
       },
       "delete": {
         "summary": "Delete a specific dedup key",
+        "description": "Removes a single key from the dedup store. Only supported by backends that implement the Delete interface.",
         "operationId": "deleteDedupKey",
         "tags": [
           "Dedup"
@@ -989,6 +1008,7 @@
     "/api/v1/dedup": {
       "delete": {
         "summary": "Clear all dedup entries (admin only)",
+        "description": "Clears the entire dedup store. Only supported by backends that implement the Clear interface. Admin scope required.",
         "operationId": "clearDedup",
         "tags": [
           "Dedup"
@@ -1031,6 +1051,7 @@
     "/api/v1/robots": {
       "get": {
         "summary": "Get robots.txt cache status",
+        "description": "Returns the status of the robots.txt LRU cache. Individual entries cannot be listed.",
         "operationId": "getRobots",
         "tags": [
           "Robots"
@@ -1066,6 +1087,7 @@
       },
       "delete": {
         "summary": "Attempt to clear the robots.txt cache (TTL-based; informational)",
+        "description": "Robots cache entries expire via TTL; explicit clear is not currently supported.",
         "operationId": "clearRobots",
         "tags": [
           "Robots"
@@ -1099,6 +1121,7 @@
     "/api/v1/spool": {
       "get": {
         "summary": "List spooled batch files",
+        "description": "Lists all files in the spool directory (failed batch deliveries awaiting retry), with file names, sizes, and timestamps.",
         "operationId": "getSpool",
         "tags": [
           "Spool"
@@ -1153,6 +1176,7 @@
       },
       "delete": {
         "summary": "Delete all spooled batch files",
+        "description": "Deletes all files in the spool directory.",
         "operationId": "clearSpool",
         "tags": [
           "Spool"
@@ -1186,6 +1210,7 @@
     "/api/v1/spool/retry": {
       "post": {
         "summary": "Retry delivery of spooled batches",
+        "description": "Triggers a retry of all spooled batches by calling the emitter's Drain method.",
         "operationId": "retrySpool",
         "tags": [
           "Spool"
@@ -1220,6 +1245,7 @@
     "/api/v1/emitter": {
       "get": {
         "summary": "Get emitter status and pending batch counts",
+        "description": "Returns the emitter's current state including pending edge and node counts, ingest URL, and spool directory path.",
         "operationId": "getEmitter",
         "tags": [
           "Emitter"
@@ -1266,6 +1292,7 @@
     "/api/v1/emitter/flush": {
       "post": {
         "summary": "Force-flush the current in-memory batch",
+        "description": "Forces the emitter to immediately flush any buffered edges and nodes to the ingest endpoint.",
         "operationId": "flushEmitter",
         "tags": [
           "Emitter"
@@ -1300,6 +1327,7 @@
     "/api/v1/excludes": {
       "get": {
         "summary": "Get the current TLD exclusion list",
+        "description": "Returns the list of TLDs currently excluded from crawling.",
         "operationId": "getExcludes",
         "tags": [
           "Excludes"
@@ -1339,6 +1367,7 @@
       },
       "put": {
         "summary": "Replace the entire TLD exclusion list",
+        "description": "Replaces the entire TLD exclusion list with the provided array.",
         "operationId": "setExcludes",
         "tags": [
           "Excludes"
@@ -1401,6 +1430,7 @@
       },
       "post": {
         "summary": "Add a single TLD to the exclusion list",
+        "description": "Adds a single TLD to the exclusion list if not already present.",
         "operationId": "addExclude",
         "tags": [
           "Excludes"
@@ -1463,6 +1493,7 @@
     "/api/v1/excludes/{tld}": {
       "delete": {
         "summary": "Remove a TLD from the exclusion list",
+        "description": "Removes a single TLD from the exclusion list.",
         "operationId": "removeExclude",
         "tags": [
           "Excludes"
@@ -1513,6 +1544,7 @@
     "/api/v1/discovery": {
       "get": {
         "summary": "Get discovery limits and counters",
+        "description": "Returns the current discovery state: number of domains discovered, max domain limit, and whether continuous mode is enabled.",
         "operationId": "getDiscovery",
         "tags": [
           "Discovery"
@@ -1554,6 +1586,7 @@
       },
       "patch": {
         "summary": "Update discovery limits",
+        "description": "Updates discovery settings. Can change max_domains (also updates the sink's atomic limit) and continuous mode.",
         "operationId": "updateDiscovery",
         "tags": [
           "Discovery"
@@ -1618,6 +1651,7 @@
     "/api/v1/queue": {
       "get": {
         "summary": "Inspect the work queue (not implemented)",
+        "description": "Queue introspection is not yet implemented.",
         "operationId": "getQueue",
         "tags": [
           "Queue"
@@ -1637,6 +1671,7 @@
       },
       "delete": {
         "summary": "Clear the work queue (not implemented)",
+        "description": "Queue clear is not yet implemented.",
         "operationId": "clearQueue",
         "tags": [
           "Queue"
@@ -1658,6 +1693,7 @@
     "/api/v1/queue/{host}": {
       "delete": {
         "summary": "Remove a host from the queue (not implemented)",
+        "description": "Queue item removal is not yet implemented.",
         "operationId": "removeFromQueue",
         "tags": [
           "Queue"
@@ -1684,6 +1720,7 @@
     "/api/v1/logs/stream": {
       "get": {
         "summary": "Stream log output (not yet implemented)",
+        "description": "Server-Sent Events log stream. Not yet implemented.",
         "operationId": "streamLogs",
         "tags": [
           "Observability"
@@ -1705,6 +1742,7 @@
     "/api/v1/logs/level": {
       "put": {
         "summary": "Change the log verbosity level at runtime",
+        "description": "Changes the runtime log level by patching the logging config.",
         "operationId": "setLogLevel",
         "tags": [
           "Observability"
@@ -1766,6 +1804,7 @@
     "/api/v1/metrics": {
       "get": {
         "summary": "Get metrics endpoint reference (use /metrics for Prometheus format)",
+        "description": "Returns a pointer to the Prometheus /metrics endpoint. Use that endpoint directly for scraping.",
         "operationId": "getMetricsJSON",
         "tags": [
           "Observability"
@@ -1803,6 +1842,7 @@
     "/api/v1/metrics/reset": {
       "post": {
         "summary": "Reset Prometheus counters (not supported; requires restart)",
+        "description": "Prometheus counters cannot be reset at runtime; a process restart is required.",
         "operationId": "resetMetrics",
         "tags": [
           "Observability"
@@ -1836,6 +1876,7 @@
     "/api/v1/telemetry": {
       "get": {
         "summary": "Get current telemetry configuration",
+        "description": "Returns the current OpenTelemetry configuration (endpoint, service name, insecure flag).",
         "operationId": "getTelemetry",
         "tags": [
           "Observability"
@@ -1862,6 +1903,7 @@
       },
       "patch": {
         "summary": "Update telemetry settings (informational; requires restart to take effect)",
+        "description": "Telemetry configuration changes require a restart to take effect. Changes are stored but not applied.",
         "operationId": "updateTelemetry",
         "tags": [
           "Observability"
@@ -1919,6 +1961,7 @@
     "/api/v1/health/checkers": {
       "get": {
         "summary": "Get health checker registration status",
+        "description": "Health checkers are registered programmatically. Use GET /health for current status.",
         "operationId": "getCheckers",
         "tags": [
           "Observability"
@@ -1950,6 +1993,7 @@
       },
       "post": {
         "summary": "Register a health checker (not supported)",
+        "description": "Dynamic checker registration via API is not supported.",
         "operationId": "addChecker",
         "tags": [
           "Observability"
@@ -1981,6 +2025,7 @@
     "/api/v1/health/checkers/{name}": {
       "delete": {
         "summary": "Remove a health checker (not supported)",
+        "description": "Dynamic checker removal via API is not supported.",
         "operationId": "removeChecker",
         "tags": [
           "Observability"
@@ -2012,6 +2057,7 @@
     "/api/v1/output": {
       "get": {
         "summary": "Get current output configuration",
+        "description": "Returns the current output configuration (format, ingest URL, spool directory).",
         "operationId": "getOutput",
         "tags": [
           "Observability"
@@ -2038,6 +2084,7 @@
       },
       "patch": {
         "summary": "Update output configuration (Tier 2 — applied with warnings)",
+        "description": "Updates output configuration fields. Subject to tier-based validation.",
         "operationId": "updateOutput",
         "tags": [
           "Observability"
@@ -2108,6 +2155,7 @@
     "/api/v1/dns/{host}": {
       "get": {
         "summary": "Perform a live DNS lookup for a host",
+        "description": "Performs a live DNS resolution for the given host, returning A/AAAA, NS, CNAME, MX, and TXT records.",
         "operationId": "dnsResolve",
         "tags": [
           "Diagnostics"
@@ -2179,6 +2227,7 @@
     "/api/v1/tls/{host}": {
       "get": {
         "summary": "Fetch the TLS certificate for a host",
+        "description": "Fetches the TLS certificate from the given host on port 443 and returns parsed certificate metadata.",
         "operationId": "tlsFetch",
         "tags": [
           "Diagnostics"
@@ -2228,6 +2277,7 @@
     "/api/v1/httpclient": {
       "get": {
         "summary": "Get HTTP client configuration",
+        "description": "Returns the current HTTP client configuration (timeouts, connection pool settings).",
         "operationId": "getHTTPClient",
         "tags": [
           "Diagnostics"
@@ -2254,6 +2304,7 @@
       },
       "patch": {
         "summary": "Update HTTP client configuration (requires restart)",
+        "description": "HTTP client configuration changes require a restart.",
         "operationId": "updateHTTPClient",
         "tags": [
           "Diagnostics"
@@ -2285,6 +2336,7 @@
     "/api/v1/keys": {
       "get": {
         "summary": "List all API keys (admin only)",
+        "description": "Lists all configured API keys with their names and scopes. Admin scope required.",
         "operationId": "listKeys",
         "tags": [
           "Keys"
@@ -2325,6 +2377,7 @@
       },
       "post": {
         "summary": "Create a new API key (admin only)",
+        "description": "Creates a new API key with a randomly generated token. Returns the key value (only shown once). Admin scope required.",
         "operationId": "createKey",
         "tags": [
           "Keys"
@@ -2397,6 +2450,7 @@
     "/api/v1/keys/{key}": {
       "delete": {
         "summary": "Delete an API key (admin only)",
+        "description": "Revokes and deletes an API key. Admin scope required.",
         "operationId": "deleteKey",
         "tags": [
           "Keys"
@@ -2444,6 +2498,7 @@
     "/api/v1/query/domains": {
       "get": {
         "summary": "List discovered domain nodes",
+        "description": "Lists discovered domains with optional filtering by apex domain or search string. Supports cursor-based pagination.",
         "operationId": "listDomains",
         "tags": [
           "Query"
@@ -2500,6 +2555,7 @@
     "/api/v1/query/domains/{host}": {
       "get": {
         "summary": "Get a single domain with its edges",
+        "description": "Returns details for a specific domain including all related edges (inbound and outbound).",
         "operationId": "getDomain",
         "tags": [
           "Query"
@@ -2539,6 +2595,7 @@
     "/api/v1/query/edges": {
       "get": {
         "summary": "List discovered edges",
+        "description": "Lists discovered edges with optional filtering by type, source, or target. Supports cursor-based pagination.",
         "operationId": "listEdges",
         "tags": [
           "Query"
@@ -2610,6 +2667,7 @@
     "/api/v1/query/ips": {
       "get": {
         "summary": "List discovered IP nodes",
+        "description": "Lists discovered IP addresses with optional search filtering. Supports cursor-based pagination.",
         "operationId": "listIPs",
         "tags": [
           "Query"
@@ -2657,6 +2715,7 @@
     "/api/v1/query/certs": {
       "get": {
         "summary": "List discovered TLS certificate nodes",
+        "description": "Lists discovered TLS certificates with optional search filtering by subject or issuer CN. Supports cursor-based pagination.",
         "operationId": "listCerts",
         "tags": [
           "Query"
