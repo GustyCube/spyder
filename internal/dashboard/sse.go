@@ -21,12 +21,12 @@ func NewHandler(h *hub.Hub, log *zap.SugaredLogger) *Handler {
 	return &Handler{hub: h, log: log}
 }
 
-// RegisterRoutes registers dashboard routes on the default mux.
-func (h *Handler) RegisterRoutes() {
-	http.HandleFunc("/api/events", h.ServeSSE)
-	http.HandleFunc("/api/stats", h.ServeStats)
-	http.HandleFunc("/api/history", h.ServeHistory)
-	http.Handle("/", http.FileServer(http.FS(staticFS())))
+// RegisterRoutes registers dashboard routes on the given mux.
+func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/events", h.ServeSSE)
+	mux.HandleFunc("/api/stats", h.ServeStats)
+	mux.HandleFunc("/api/history", h.ServeHistory)
+	mux.Handle("/", http.FileServer(http.FS(staticFS())))
 }
 
 // ServeSSE streams Server-Sent Events to the client.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -22,9 +23,9 @@ import (
 	"github.com/gustycube/spyder/internal/logging"
 	"github.com/gustycube/spyder/internal/metrics"
 	"github.com/gustycube/spyder/internal/output"
-	"github.com/gustycube/spyder/internal/store"
 	"github.com/gustycube/spyder/internal/probe"
 	"github.com/gustycube/spyder/internal/queue"
+	"github.com/gustycube/spyder/internal/store"
 	"github.com/gustycube/spyder/internal/telemetry"
 )
 
@@ -85,7 +86,7 @@ func main() {
 	flag.BoolVar(&enableDashboard, "dashboard", true, "enable live web dashboard on metrics port")
 	flag.StringVar(&mongoURI, "mongodb", "", "MongoDB connection URI (e.g. mongodb://localhost:27017)")
 	flag.StringVar(&mongoDB, "mongodb_db", "spyder", "MongoDB database name")
-	
+
 	// Custom usage function
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "SPYDER (System for Probing and Yielding DNS-based Entity Relations)\n")
@@ -103,7 +104,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  LOG_LEVEL        Log level (debug, info, warn, error)\n")
 		fmt.Fprintf(os.Stderr, "\nFor more information: https://github.com/gustycube/spyder\n")
 	}
-	
+
 	flag.Parse()
 
 	// Handle version flag
@@ -145,58 +146,55 @@ func main() {
 	cfg.LoadFromEnv()
 
 	// Override with command-line flags (if provided)
-	flags := make(map[string]interface{})
 	if domainsFile != "" {
-		flags["domains"] = domainsFile
+		cfg.Domains = domainsFile
 	}
 	if probeID != "" {
-		flags["probe"] = probeID
+		cfg.Probe = probeID
 	}
 	if runID != "" {
-		flags["run"] = runID
+		cfg.Run = runID
 	}
 	if ua != "" {
-		flags["ua"] = ua
+		cfg.UA = ua
 	}
 	if concurrency > 0 {
-		flags["concurrency"] = concurrency
+		cfg.Crawling.Concurrency = concurrency
 	}
 	if ingest != "" {
-		flags["ingest"] = ingest
+		cfg.Output.Ingest = ingest
 	}
 	if metricsAddr != "" {
-		flags["metrics_addr"] = metricsAddr
+		cfg.Telemetry.MetricsAddr = metricsAddr
 	}
 	if batchMax > 0 {
-		flags["batch_max_edges"] = batchMax
+		cfg.Batch.MaxEdges = batchMax
 	}
 	if batchFlushSec > 0 {
-		flags["batch_flush_sec"] = batchFlushSec
+		cfg.Batch.FlushInterval = config.Duration(time.Duration(batchFlushSec) * time.Second)
 	}
 	if spoolDir != "" {
-		flags["spool_dir"] = spoolDir
+		cfg.Output.SpoolDir = spoolDir
 	}
 	if mtlsCert != "" {
-		flags["mtls_cert"] = mtlsCert
+		cfg.MTLS.Cert = mtlsCert
 	}
 	if mtlsKey != "" {
-		flags["mtls_key"] = mtlsKey
+		cfg.MTLS.Key = mtlsKey
 	}
 	if mtlsCA != "" {
-		flags["mtls_ca"] = mtlsCA
+		cfg.MTLS.CA = mtlsCA
 	}
 	if otelEndpoint != "" {
-		flags["otel_endpoint"] = otelEndpoint
+		cfg.Telemetry.OTELEndpoint = otelEndpoint
 	}
 	if otelService != "" {
-		flags["otel_service"] = otelService
+		cfg.Telemetry.OTELService = otelService
 	}
 	if outputFormat != "" {
-		flags["output_format"] = outputFormat
+		cfg.Output.Format = outputFormat
 	}
-	flags["otel_insecure"] = otelInsecure
-
-	cfg.MergeWithFlags(flags)
+	cfg.Telemetry.OTELInsecure = otelInsecure
 
 	// Handle exclude_tlds flag specially
 	if exclude != "" {
@@ -215,7 +213,7 @@ func main() {
 	}
 
 	// Initialize telemetry
-	shutdown, err := telemetry.Init(ctx, cfg.OTELEndpoint, cfg.OTELService, cfg.OTELInsecure)
+	shutdown, err := telemetry.Init(ctx, cfg.Telemetry.OTELEndpoint, cfg.Telemetry.OTELService, cfg.Telemetry.OTELInsecure)
 	if err != nil {
 		log.Warn("otel init failed", "err", err)
 	} else {
@@ -228,7 +226,11 @@ func main() {
 	healthHandler.SetMetadata("run", cfg.Run)
 	healthHandler.SetMetadata("version", "1.0.0")
 
-	// Metrics and dashboard server started after hub init (see below)
+	// Create explicit ServeMux
+	mux := http.NewServeMux()
+
+	// Register health routes (unauthenticated)
+	healthHandler.RegisterRoutes(mux)
 
 	// Open domains file
 	f, err := os.Open(cfg.Domains)
@@ -244,20 +246,20 @@ func main() {
 	// Initialize deduplication
 	var d dedup.Interface
 	var redisHealthCheck func() error
-	if cfg.RedisAddr != "" {
-		rd, err := dedup.NewRedis(cfg.RedisAddr, 24*time.Hour, log)
+	if cfg.Redis.Addr != "" {
+		rd, err := dedup.NewRedis(cfg.Redis.Addr, 24*time.Hour, log)
 		if err != nil {
 			log.Fatal("redis init", "err", err)
 		}
-		log.Info("redis dedupe enabled", "addr", cfg.RedisAddr)
+		log.Info("redis dedupe enabled", "addr", cfg.Redis.Addr)
 		d = rd
-		
+
 		// Register Redis health check
 		redisHealthCheck = func() error {
 			// Simple ping check - would need to expose from dedup.Redis
 			return nil
 		}
-		healthHandler.RegisterChecker("redis", health.NewRedisChecker(cfg.RedisAddr, redisHealthCheck))
+		healthHandler.RegisterChecker("redis", health.NewRedisChecker(cfg.Redis.Addr, redisHealthCheck))
 	} else {
 		d = dedup.NewMemory()
 		log.Info("memory dedupe enabled")
@@ -265,8 +267,8 @@ func main() {
 
 	// Initialize output writer for stdout mode
 	var stdoutWriter emit.StdoutWriter
-	if cfg.Ingest == "" {
-		ow, err := output.NewStdoutWriter(cfg.OutputFormat)
+	if cfg.Output.Ingest == "" {
+		ow, err := output.NewStdoutWriter(cfg.Output.Format)
 		if err != nil {
 			log.Fatal("output writer init", "err", err)
 		}
@@ -288,15 +290,15 @@ func main() {
 	// Initialize emitter
 	emitterBatches := make(chan emit.Batch, 1024)
 	emitter, err := emit.NewEmitter(
-		cfg.Ingest,
+		cfg.Output.Ingest,
 		cfg.Probe,
 		cfg.Run,
-		cfg.BatchMaxEdges,
-		time.Duration(cfg.BatchFlushSec)*time.Second,
-		cfg.SpoolDir,
-		cfg.MTLSCert,
-		cfg.MTLSKey,
-		cfg.MTLSCA,
+		cfg.Batch.MaxEdges,
+		cfg.Batch.FlushInterval.Unwrap(),
+		cfg.Output.SpoolDir,
+		cfg.MTLS.Cert,
+		cfg.MTLS.Key,
+		cfg.MTLS.CA,
 		stdoutWriter,
 		batchStore,
 	)
@@ -313,21 +315,21 @@ func main() {
 	// Register dashboard routes and start metrics server
 	if enableDashboard {
 		dashHandler := dashboard.NewHandler(eventHub, log)
-		dashHandler.RegisterRoutes()
-		log.Info("dashboard enabled", "url", "http://localhost"+cfg.MetricsAddr)
+		dashHandler.RegisterRoutes(mux)
+		log.Info("dashboard enabled", "url", "http://localhost"+cfg.Telemetry.MetricsAddr)
 	}
-	if cfg.MetricsAddr != "" {
-		go metrics.ServeWithHealth(cfg.MetricsAddr, healthHandler, log)
-		log.Info("metrics and health server started", "addr", cfg.MetricsAddr)
+	if cfg.Telemetry.MetricsAddr != "" {
+		go metrics.ServeWithHealth(cfg.Telemetry.MetricsAddr, mux, log)
+		log.Info("metrics and health server started", "addr", cfg.Telemetry.MetricsAddr)
 	}
 
 	// Initialize task queue and discovery sink
 	tasks := make(chan string, 8192)
 	var sink discover.Sink
 
-	if cfg.RedisQueueAddr != "" {
-		log.Info("redis queue enabled", "addr", cfg.RedisQueueAddr, "key", cfg.RedisQueueKey)
-		q, err := queue.NewRedis(cfg.RedisQueueAddr, cfg.RedisQueueKey, 120*time.Second)
+	if cfg.Redis.QueueAddr != "" {
+		log.Info("redis queue enabled", "addr", cfg.Redis.QueueAddr, "key", cfg.Redis.QueueKey)
+		q, err := queue.NewRedis(cfg.Redis.QueueAddr, cfg.Redis.QueueKey, 120*time.Second)
 		if err != nil {
 			log.Fatal("redis queue init", "err", err)
 		}
@@ -408,7 +410,7 @@ func main() {
 	log.Info("starting spyder",
 		"probe", cfg.Probe,
 		"run", cfg.Run,
-		"concurrency", cfg.Concurrency,
+		"concurrency", cfg.Crawling.Concurrency,
 		"continuous", continuous,
 		"exclude_tlds", cfg.ExcludeTLDs,
 		"config_file", configFile,
@@ -420,7 +422,7 @@ func main() {
 
 	// Start probe
 	p := probe.New(cfg.UA, cfg.Probe, cfg.Run, cfg.ExcludeTLDs, d, sink, batches, log)
-	p.Run(ctx, tasks, cfg.Concurrency)
+	p.Run(ctx, tasks, cfg.Crawling.Concurrency)
 
 	// Wait for emitter to drain
 	emitter.Drain(log)

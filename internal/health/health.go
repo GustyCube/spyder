@@ -167,6 +167,13 @@ func (h *Handler) ReadinessHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// RegisterRoutes registers health check routes on the given mux.
+func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/health", h.HealthHandler)
+	mux.HandleFunc("/ready", h.ReadinessHandler)
+	mux.HandleFunc("/live", h.LivenessHandler)
+}
+
 // LivenessHandler handles liveness check requests (always returns OK if service is running)
 func (h *Handler) LivenessHandler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
