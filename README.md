@@ -53,6 +53,7 @@ graph TD
 - **Observability** -- Prometheus metrics, OpenTelemetry traces, structured Zap logging
 - **Fault tolerance** -- circuit breaker pattern, exponential backoff, disk-based spool for failed deliveries
 - **Secure transport** -- full mTLS support with CA bundle validation for ingest endpoints
+- **Control API** -- REST API with auth, hot config reload, dynamic worker scaling, and query layer
 - **Cloud-native** -- distroless container images, Kubernetes health checks, Redis work queues
 
 ## Quick Start
@@ -162,6 +163,29 @@ Use Redis work queues for multi-instance deployments:
 REDIS_QUEUE_ADDR=redis:6379 ./bin/spyder -probe=probe-1 -continuous
 REDIS_QUEUE_ADDR=redis:6379 ./bin/spyder -probe=probe-2 -continuous
 ```
+
+## Control API
+
+SPYDER exposes a REST API on the metrics port (`:9090`) for runtime control:
+
+```bash
+# Check status (requires API key with read scope)
+curl -H "Authorization: Bearer $API_KEY" http://localhost:9090/api/v1/status
+
+# Submit domains for crawling
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  -d '{"host":"example.com"}' http://localhost:9090/api/v1/domains
+
+# Scale workers at runtime
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  -d '{"count":512}' http://localhost:9090/api/v1/workers/scale
+
+# Hot-reload configuration
+curl -X PATCH -H "Authorization: Bearer $API_KEY" \
+  -d '{"crawling":{"rate_per_host":5.0}}' http://localhost:9090/api/v1/config
+```
+
+Configure API keys in your config file or via `SPYDER_API_KEYS` env var. See the [API docs](https://gustycube.github.io/spyder/api/overview) for all ~60 endpoints.
 
 ## Documentation
 

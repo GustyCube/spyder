@@ -38,7 +38,8 @@ export default defineConfig({
           { text: 'Command Line', link: '/config/cli' },
           { text: 'Environment Variables', link: '/config/environment' },
           { text: 'Redis Setup', link: '/config/redis' },
-          { text: 'mTLS & Security', link: '/config/security' }
+          { text: 'mTLS & Security', link: '/config/security' },
+          { text: 'API Settings', link: '/config/api' }
         ]
       },
       {
@@ -81,6 +82,8 @@ export default defineConfig({
         text: 'API Reference',
         items: [
           { text: 'Overview', link: '/api/overview' },
+          { text: 'Authentication', link: '/api/authentication' },
+          { text: 'Hot Reload', link: '/api/hot-reload' },
           { text: 'Data Types', link: '/api/data-types' },
           { text: 'Ingestion API', link: '/api/ingestion' },
           { text: 'Queue Protocol', link: '/api/queue' }
