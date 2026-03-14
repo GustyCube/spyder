@@ -17,3 +17,5 @@ docs/node_modules
 # Built binaries
 /spyder
 /seed
+/docs/superpowers
+docs/specs/
