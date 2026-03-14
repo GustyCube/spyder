@@ -51,11 +51,24 @@ SPYDER creates a graph of relationships between:
 
 ## Configuration Options
 
+### Using a Config File
+
+SPYDER supports YAML (or JSON) config files via the `-config` flag. This is the recommended approach for non-trivial deployments:
+
+```bash
+./bin/spyder -config=configs/spyder.yaml
+```
+
+Command-line flags take precedence over file values when both are provided. Send `SIGHUP` to reload a config file at runtime without restarting the process.
+
 ### Essential Flags
 
 ```bash
-# Required: domains to probe
+# Required: domains to probe (or use -config)
 -domains=configs/domains.txt
+
+# Optional: load all settings from a YAML/JSON file
+-config=configs/spyder.yaml
 
 # Optional: send results to ingest API
 -ingest=https://your-api.example.com/v1/batch
@@ -82,7 +95,26 @@ SPYDER creates a graph of relationships between:
 
 # Reliability
 -spool_dir=spool           # Failed batch storage
+
+# Recursive crawling
+-continuous                 # Enable recursive domain discovery
+-max_domains=50000          # Limit discovered domains (0 = unlimited)
+
+# Storage and UI
+-dashboard                  # Enable live web dashboard (default: true)
+-mongodb=mongodb://localhost:27017  # Persist batches to MongoDB
+-mongodb_db=spyder          # MongoDB database name (default: spyder)
 ```
+
+### Control API
+
+SPYDER exposes a Control API on the metrics port that allows runtime inspection and configuration changes without restarting the process. Key capabilities include:
+
+- **Hot reload**: Update `ua`, `exclude_tlds`, rate limits, and concurrency at runtime via `PATCH /api/v1/config`.
+- **Worker pool control**: Scale workers up or down via `POST /api/v1/control/scale`.
+- **API key management**: Add, remove, and list API keys via `/api/v1/keys` (requires `admin` scope).
+
+Requests to the Control API require an `X-API-Key` header. See [API Authentication](../api/authentication.md) and [Configuration Reference](../config/cli.md) for details.
 
 ## Environment Variables
 

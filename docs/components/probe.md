@@ -4,20 +4,21 @@ The Probe Engine is the core orchestrator of SPYDER, responsible for coordinatin
 
 ## Architecture
 
+The probe is constructed with a `ProbeConfig` that exposes configurable timeout and size parameters:
+
 ```go
-type Probe struct {
-    ua       string               // User-Agent for HTTP requests
-    probeID  string               // Unique probe identifier
-    runID    string               // Current run identifier
-    excluded []string             // Excluded TLD list
-    dedup    dedup.Interface      // Deduplication backend
-    out      chan<- emit.Batch    // Output channel for batches
-    hc       *http.Client         // HTTP client instance
-    rob      *robots.Cache        // Robots.txt cache
-    ratelim  *rate.PerHost        // Per-host rate limiter
-    log      *zap.SugaredLogger   // Structured logger
+type ProbeConfig struct {
+    UA           string        // User-Agent for HTTP requests
+    ProbeID      string        // Unique probe identifier
+    RunID        string        // Current run identifier
+    ExcludeTLDs  []string      // Excluded TLD list
+    HTTPTimeout  time.Duration // Overall HTTP request timeout (default: 15s)
+    TLSTimeout   time.Duration // TLS dial timeout (default: 8s)
+    BodyMaxBytes int64         // Max response body bytes (default: 524288 = 512KB)
 }
 ```
+
+`UA` and `ExcludeTLDs` can be updated at runtime without restarting via `SetUA()` and `SetExcludeTLDs()` methods. The Control API calls these automatically when a config patch is applied.
 
 ## Core Functions
 
@@ -170,25 +171,19 @@ func (p *PerHost) Wait(host string) {
 
 ### HTTP Client Configuration
 
-**Optimized HTTP Transport:**
-```go
-func Default() *http.Client {
-    tr := &http.Transport{
-        TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
-        DisableCompression:    false,
-        MaxIdleConns:          1024,
-        MaxConnsPerHost:       128,
-        MaxIdleConnsPerHost:   64,
-        ResponseHeaderTimeout: 10 * time.Second,
-        IdleConnTimeout:       30 * time.Second,
-        ExpectContinueTimeout: 1 * time.Second,
-    }
-    return &http.Client{
-        Transport: tr,
-        Timeout:   15 * time.Second,
-    }
-}
-```
+The HTTP client used for content fetching is built from `httpclient.ClientConfig`, which maps to config file fields under `http_client`:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `HTTPTimeout` | 15s | Overall HTTP request timeout (maps to `Crawling.HTTPTimeout`) |
+| `TLSTimeout` | 8s | TLS dial/handshake timeout (maps to `Crawling.TLSTimeout`) |
+| `BodyMaxBytes` | 524288 (512KB) | Maximum response body bytes read (maps to `Crawling.BodyMaxBytes`) |
+| `MaxIdleConns` | 1024 | Connection pool size |
+| `MaxConnsPerHost` | 128 | Per-host connection cap |
+| `ResponseHeaderTimeout` | 10s | Timeout waiting for response headers |
+| `IdleConnTimeout` | 30s | Idle connection expiry |
+
+All timeout and size values are configurable via the YAML config file or via the Control API (`PATCH /api/v1/config`) without restarting.
 
 ## Data Collection
 

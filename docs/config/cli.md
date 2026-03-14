@@ -4,7 +4,29 @@ This document provides comprehensive information about SPYDER's command-line fla
 
 ## Required Parameters
 
-### `-domains` (Required)
+### `-config`
+
+Path to a YAML or JSON configuration file. When provided, all settings are loaded from the file. Command-line flags override individual values from the file. Either `-config` or `-domains` must be supplied.
+
+```bash
+# Load full configuration from file
+-config=configs/spyder.yaml
+
+# Override a single value from the file
+-config=configs/spyder.yaml -concurrency=512
+```
+
+**Supported formats:** `.yaml`, `.yml`, `.json`
+
+**Hot reload:** Send `SIGHUP` to the process to reload the file without restarting:
+
+```bash
+kill -HUP $(pidof spyder)
+```
+
+---
+
+### `-domains` (Required without `-config`)
 
 Path to newline-separated file containing domains to probe.
 
@@ -291,6 +313,51 @@ Path to Certificate Authority bundle (PEM format).
 - Validates server certificates
 - Used when system CA bundle insufficient
 - Multiple CA certificates supported
+
+## Dashboard & Storage
+
+### `-dashboard`
+
+Enable the live web dashboard served on the metrics port.
+
+```bash
+-dashboard=true   # Enable (default)
+-dashboard=false  # Disable
+```
+
+**Default:** `true`
+
+**URL:** `http://{metrics_addr}/` when enabled.
+
+The dashboard shows a real-time stream of discovered edges, current worker pool size, and probe statistics. It is served on the same port as Prometheus metrics.
+
+### `-mongodb`
+
+MongoDB connection URI for persisting batches to a database in addition to (or instead of) the ingest HTTP endpoint.
+
+```bash
+-mongodb=mongodb://localhost:27017
+-mongodb=mongodb://user:pass@mongo.cluster.local:27017/?authSource=admin
+```
+
+**Default:** `""` (disabled)
+
+**Behavior:**
+- Batches are written to MongoDB alongside any configured ingest endpoint or stdout output.
+- Does not replace the ingest endpoint — both run in parallel when both are configured.
+
+### `-mongodb_db`
+
+MongoDB database name used when `-mongodb` is set.
+
+```bash
+-mongodb_db=spyder          # default
+-mongodb_db=spyder_prod
+```
+
+**Default:** `spyder`
+
+---
 
 ## Observability
 

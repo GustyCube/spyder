@@ -83,32 +83,49 @@ type Batch struct {
 
 ## Emitter Architecture
 
-### `Emitter` Structure
+### `EmitterConfig` Structure
+
+All emitter options are passed through `EmitterConfig`:
+
 ```go
-type Emitter struct {
-    ingest     string           // Ingestion endpoint URL
-    client     *http.Client     // HTTP client for delivery
-    spoolDir   string          // On-disk spool directory
-    batchSize  int             // Maximum batch size
-    flushInt   time.Duration   // Flush interval
-    buffer     Batch           // Current batch buffer
-    mu         sync.Mutex      // Buffer protection
-    logger     *zap.Logger     // Structured logging
+type EmitterConfig struct {
+    Ingest             string        // Ingestion endpoint URL (empty = stdout)
+    ProbeID            string        // Probe identifier stamped on batches
+    RunID              string        // Run identifier stamped on batches
+    BatchMaxEdges      int           // Max edges per batch before forced flush
+    FlushEvery         time.Duration // Time-based flush interval
+    NodeThresholdRatio float64       // Flush when nodes exceed this ratio of BatchMaxEdges
+    SpoolDir           string        // On-disk spool directory for failed batches
+    MTLSCert           string        // Client certificate path (PEM)
+    MTLSKey            string        // Client key path (PEM)
+    MTLSCA             string        // CA bundle path (PEM)
+    RetryMaxElapsed    time.Duration // Max total time for exponential-backoff retries
+    StdoutWriter       StdoutWriter  // Optional writer for stdout output formats
+    Store              BatchStore    // Optional database store (e.g. MongoDB)
 }
 ```
 
 ## Core Functions
 
-### `NewEmitter(config EmitterConfig) *Emitter`
+### `NewEmitter(cfg EmitterConfig) (*Emitter, error)`
 
-Creates a new batch emitter with production-ready defaults.
+Creates a new batch emitter. Returns an error if mTLS certificates are misconfigured.
 
 **Configuration:**
-- **Ingestion URL**: HTTPS endpoint for batch delivery
+- **Ingestion URL**: HTTPS endpoint for batch delivery (empty = stdout)
 - **mTLS Support**: Client certificate authentication
 - **Spool Directory**: On-disk buffer for failed deliveries
-- **Batch Size**: Maximum items per batch (default: 1000)
-- **Flush Interval**: Time-based batch flushing (default: 30s)
+- **Batch Max Edges**: Maximum edges per batch (default: 10,000)
+- **Flush Interval**: Time-based batch flushing (default: 2s)
+- **RetryMaxElapsed**: Context-aware exponential backoff stops after this duration
+
+### `ForceFlush(ctx context.Context, log *zap.SugaredLogger)`
+
+Immediately flushes the current accumulator to the configured output (stdout, ingest endpoint, or database store). Used by the Control API to drain buffered data on demand without waiting for the next timed flush.
+
+### `PendingStats() (edges, nodes int)`
+
+Returns the number of edges and nodes currently buffered in the accumulator. Used by the Control API's observability endpoints to expose real-time emitter queue depth.
 
 ### `AddEdge(edge Edge)`
 
@@ -135,7 +152,8 @@ Adds nodes (Domain, IP, or Certificate) to the current batch.
 - **Maximum Delay**: 5 minutes
 - **Multiplier**: 2x per retry
 - **Jitter**: Randomization to prevent thundering herd
-- **Max Attempts**: Configurable (default: 10)
+- **Context-Aware**: Retries honour the request context; if the context is cancelled (e.g. on shutdown), the retry loop exits immediately rather than waiting for `RetryMaxElapsed`.
+- **Max Elapsed Time**: Configurable via `RetryMaxElapsed` (default: 30s)
 
 ### On-Disk Spooling
 - **Persistent Storage**: Failed batches written to disk

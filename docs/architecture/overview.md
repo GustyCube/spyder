@@ -34,7 +34,30 @@ SPYDER (System for Probing and Yielding DNS-based Entity Relations) is designed 
 
 ## Core Components
 
-### 1. Probe Engine (`internal/probe`)
+### 1. Control API (`internal/api`)
+
+An HTTP API served on the metrics port that exposes runtime control and observability endpoints:
+
+- **Configuration hot reload**: `PATCH /api/v1/config` accepts a `ConfigPatch` and applies changes without restarting. Tier 1 fields (rate limits, concurrency, UA, exclude TLDs, batch settings) take effect immediately. Tier 2 fields (output format, ingest URL, spool dir) are applied with warnings. Tier 3 fields (Redis, mTLS, MongoDB addresses) require a restart and are rejected.
+- **Worker pool control**: `POST /api/v1/control/scale` adjusts the number of active workers at runtime.
+- **API key management**: CRUD operations on API keys at `/api/v1/keys`.
+- **Observability**: Query recent edges, view pending emitter stats, inspect current config.
+
+Authentication uses `X-API-Key` headers with three scopes: `read`, `write`, `admin`. See [API Authentication](../api/authentication.md).
+
+### 2. RuntimeConfig (`internal/config`)
+
+`RuntimeConfig` wraps the static `Config` struct with a mutex and a change-listener system, enabling safe concurrent reads and atomic config patches:
+
+- `Apply(ConfigPatch)` validates and applies partial updates, then fires registered `OnChange` callbacks.
+- `ReloadFromFile(path)` diffs the on-disk config against the live config and calls `Apply` with the diff.
+- Callbacks propagate changes to the probe engine (UA, ExcludeTLDs), rate limiter (SetRate), and API server rate limits without any restart.
+
+### 3. Dynamic Worker Pool (`internal/pool`)
+
+The worker pool (`pool.New`) accepts a task channel and a handler function. `Scale(n)` adds or removes goroutines at runtime, allowing the Control API to adjust concurrency in response to load or operator commands. The pool drains gracefully when the context is cancelled.
+
+### 4. Probe Engine (`internal/probe`)
 
 The central orchestrator that coordinates domain probing:
 
@@ -49,7 +72,7 @@ The central orchestrator that coordinates domain probing:
 - OpenTelemetry tracing integration
 - Prometheus metrics collection
 
-### 2. DNS Resolution (`internal/dns`)
+### 5. DNS Resolution (`internal/dns`)
 
 Performs comprehensive DNS lookups:
 
@@ -64,7 +87,7 @@ Performs comprehensive DNS lookups:
 - Context-aware with timeout handling
 - Concurrent resolution for multiple record types
 
-### 3. HTTP Client (`internal/httpclient`)
+### 6. HTTP Client (`internal/httpclient`)
 
 Optimized HTTP client for web content fetching:
 
@@ -79,7 +102,7 @@ Optimized HTTP client for web content fetching:
 - Response timeout: 10 seconds
 - Overall timeout: 15 seconds
 
-### 4. Link Extraction (`internal/extract`)
+### 7. Link Extraction (`internal/extract`)
 
 Parses HTML content to discover external relationships:
 
@@ -95,7 +118,7 @@ Parses HTML content to discover external relationships:
 - `<img src="...">` - Images
 - `<iframe src="...">` - Embedded content
 
-### 5. TLS Analysis (`internal/tlsinfo`)
+### 8. TLS Analysis (`internal/tlsinfo`)
 
 Extracts TLS certificate metadata:
 
@@ -109,7 +132,7 @@ Extracts TLS certificate metadata:
 - Timeout protection (8 seconds)
 - Secure TLS configuration
 
-### 6. Rate Limiting (`internal/rate`)
+### 9. Rate Limiting (`internal/rate`)
 
 Per-host token bucket rate limiting:
 
@@ -122,7 +145,7 @@ Per-host token bucket rate limiting:
 - 1.0 requests per second per host
 - Burst size: 1 request
 
-### 7. Robots.txt Handling (`internal/robots`)
+### 10. Robots.txt Handling (`internal/robots`)
 
 Respectful crawling with robots.txt compliance:
 
@@ -131,7 +154,7 @@ Respectful crawling with robots.txt compliance:
 - **User-Agent Matching**: Respects specific and wildcard rules
 - **Default Allow**: Assumes allowed if robots.txt unavailable
 
-### 8. Deduplication (`internal/dedup`)
+### 11. Deduplication (`internal/dedup`)
 
 Prevents duplicate data collection:
 
@@ -140,7 +163,7 @@ Prevents duplicate data collection:
 - **Key Generation**: Consistent hashing for nodes and edges
 - **TTL Support**: Automatic expiration for Redis backend
 
-### 9. Batch Emitter (`internal/emit`)
+### 12. Batch Emitter (`internal/emit`)
 
 Efficient data output with reliability:
 
@@ -151,7 +174,7 @@ Efficient data output with reliability:
 - **Spooling**: On-disk storage for failed batches
 - **mTLS Support**: Client certificate authentication
 
-### 10. Queue System (`internal/queue`)
+### 13. Queue System (`internal/queue`)
 
 Distributed task distribution:
 

@@ -78,6 +78,18 @@ Blocks until a request token becomes available for the host.
 - **Guaranteed Execution**: Always allows request after wait
 - **Context-Free**: Uses background context for waiting
 
+### `SetRate(perSecond float64, burst int)`
+
+Updates the rate and burst parameters for newly created per-host limiters. Existing limiters (already created for active hosts) keep their current rate until they expire and are recreated. Called automatically by the runtime config change listener when the Control API patches `crawling.rate_per_host` or `crawling.rate_burst`.
+
+### `Stats() map[string]LimiterStats`
+
+Returns a snapshot of all active per-host limiter states. Each entry reports the host and the number of tokens currently consumed (approximated). Used by the Control API's observability endpoints.
+
+### `Close()`
+
+Signals the background cleanup goroutine to stop. Should be called when the rate limiter is no longer needed to avoid goroutine leaks.
+
 ## Rate Limiting Algorithm
 
 ### Token Bucket Implementation
@@ -243,10 +255,10 @@ Rate limiting should be monitored for:
 ## Advanced Configuration
 
 ### Dynamic Rate Adjustment
-While not built-in, rate limits can be adjusted by:
-- Creating new rate limiter instances
-- Implementing rate adjustment based on server response patterns
-- Using different rates for different host categories
+Rate limits can be adjusted at runtime without restarting:
+- Call `SetRate(perSecond, burst)` directly, or
+- Use the Control API: `PATCH /api/v1/config` with `{"crawling":{"rate_per_host":2.0,"rate_burst":5}}`.
+- The runtime config change listener calls `SetRate` automatically when a config patch is applied.
 
 ### Integration with Circuit Breakers
 - Rate limiting complements circuit breaker functionality

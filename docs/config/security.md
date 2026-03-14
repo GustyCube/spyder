@@ -1,6 +1,64 @@
 # Security Configuration
 
-SPYDER includes multiple security features for safe operation in production environments. This guide covers mTLS configuration, secure deployment practices, and security considerations.
+SPYDER includes multiple security features for safe operation in production environments. This guide covers API key authentication, mTLS configuration, secure deployment practices, and security considerations.
+
+## API Key Authentication
+
+The Control API (served on the metrics port alongside Prometheus metrics) requires an `X-API-Key` header for all authenticated endpoints. Keys are configured in the YAML config file under `api.keys` and can be managed at runtime via the `/api/v1/keys` endpoint.
+
+### Key Scopes
+
+Each API key is assigned one of three scopes:
+
+| Scope | Access |
+|-------|--------|
+| `read` | Read-only access: query data, view config, view metrics |
+| `write` | Everything in `read`, plus: update config, scale workers, flush emitter |
+| `admin` | Everything in `write`, plus: manage API keys, shutdown the process |
+
+Scopes are hierarchical — `admin` implies `write`, `write` implies `read`.
+
+### Configuring Keys
+
+Add keys to your YAML config file:
+
+```yaml
+api:
+  keys:
+    - key: "sk-read-abc123"
+      scope: "read"
+      name: "Grafana dashboard"
+    - key: "sk-write-xyz789"
+      scope: "write"
+      name: "CI pipeline"
+    - key: "sk-admin-secret"
+      scope: "admin"
+      name: "ops console"
+```
+
+Keys can also be supplied via the `SPYDER_API_KEYS` environment variable as a base64-encoded JSON array:
+
+```bash
+export SPYDER_API_KEYS=$(echo '[{"key":"sk-admin-secret","scope":"admin","name":"ops"}]' | base64)
+```
+
+### Using Keys
+
+```bash
+# Read endpoint (read scope required)
+curl -H "X-API-Key: sk-read-abc123" http://localhost:9090/api/v1/config
+
+# Config update (write scope required)
+curl -X PATCH -H "X-API-Key: sk-write-xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{"ua": "NewAgent/2.0"}' \
+  http://localhost:9090/api/v1/config
+
+# Key management (admin scope required)
+curl -H "X-API-Key: sk-admin-secret" http://localhost:9090/api/v1/keys
+```
+
+For full API documentation, see [API Authentication](../api/authentication.md).
 
 ## mTLS Configuration
 
