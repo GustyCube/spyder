@@ -1,0 +1,2233 @@
+openapi: 3.1.0
+
+info:
+  title: SPYDER Control API
+  version: 1.0.0
+  description: |
+    REST API for controlling and inspecting a running SPYDER DNS reconnaissance probe.
+    The API runs on the same port as the Prometheus metrics endpoint (default `:9090`).
+
+    All endpoints require a Bearer token in the `Authorization` header. Tokens are
+    scoped to one of three permission levels: **read**, **write**, or **admin**.
+    Admin scope is a superset of write, which is a superset of read.
+
+servers:
+  - url: http://localhost:9090
+    description: Default local instance
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Control
+    description: Submit domains and control crawl lifecycle (pause/resume/stop)
+  - name: Config
+    description: Read and hot-patch runtime configuration
+  - name: Stats
+    description: Aggregate statistics and history from the hub
+  - name: Workers
+    description: Worker pool inspection and scaling
+  - name: Breakers
+    description: Circuit breaker state and reset
+  - name: RateLimits
+    description: Per-host rate limit inspection and adjustment
+  - name: Dedup
+    description: Deduplication cache inspection and management
+  - name: Robots
+    description: robots.txt cache status
+  - name: Spool
+    description: Spool directory inspection and management
+  - name: Emitter
+    description: Emitter (batch output) status and flush
+  - name: Excludes
+    description: TLD exclusion list management
+  - name: Discovery
+    description: Discovery limit and continuity settings
+  - name: Queue
+    description: Work queue inspection (not yet implemented)
+  - name: Observability
+    description: Log level, metrics, telemetry, health checkers, and output config
+  - name: Diagnostics
+    description: On-demand DNS resolution, TLS certificate fetch, HTTP client config
+  - name: Keys
+    description: API key management (admin only)
+  - name: Query
+    description: Query discovered graph data (domains, edges, IPs, certificates)
+
+paths:
+
+  # ── Control ──────────────────────────────────────────────────────────────────
+
+  /api/v1/domains:
+    post:
+      summary: Submit a single domain for crawling
+      operationId: submitDomain
+      tags: [Control]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host:
+                  type: string
+                  example: example.com
+      responses:
+        "202":
+          description: Domain accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                    example: true
+                  host:
+                    type: string
+                    example: example.com
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/domains/bulk:
+    post:
+      summary: Submit multiple domains for crawling
+      operationId: submitDomainsBulk
+      tags: [Control]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+              example: ["example.com", "acme.org"]
+          text/plain:
+            schema:
+              type: string
+              description: |
+                Newline-delimited hostnames. Lines starting with `#` are ignored.
+              example: |
+                example.com
+                acme.org
+                # this line is a comment
+      responses:
+        "202":
+          description: Bulk submission result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: integer
+                    example: 2
+                  rejected:
+                    type: integer
+                    description: Count rejected because the task channel was full
+                    example: 0
+                  total:
+                    type: integer
+                    example: 2
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/control/pause:
+    post:
+      summary: Pause all crawl workers
+      operationId: pauseCrawl
+      tags: [Control]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "200":
+          description: Workers paused
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: paused
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/control/resume:
+    post:
+      summary: Resume paused crawl workers
+      operationId: resumeCrawl
+      tags: [Control]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "200":
+          description: Workers resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: resumed
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/control/stop:
+    post:
+      summary: Gracefully stop the probe process
+      operationId: stopCrawl
+      tags: [Control]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: Stop initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: stopping
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  # ── Config ───────────────────────────────────────────────────────────────────
+
+  /api/v1/config:
+    get:
+      summary: Get the current runtime configuration snapshot
+      operationId: getConfig
+      tags: [Config]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Current configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Config"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    patch:
+      summary: Hot-patch runtime configuration
+      description: |
+        Applies a partial configuration update. Only provided fields are changed.
+
+        - **Tier 1** fields are applied immediately and safely.
+        - **Tier 2** fields are applied with warnings (e.g. changing output format mid-run).
+        - **Tier 3** fields (e.g. `redis.addr`, `mongodb.uri`) are **rejected** — the probe
+          must be restarted to apply them.
+      operationId: patchConfig
+      tags: [Config]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigPatch"
+      responses:
+        "200":
+          description: Updated configuration and any warnings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config:
+                    $ref: "#/components/schemas/Config"
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                    example: []
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Patch contains Tier 3 fields that require restart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Stats & Status ────────────────────────────────────────────────────────────
+
+  /api/v1/stats:
+    get:
+      summary: Get aggregate crawl statistics
+      operationId: getStats
+      tags: [Stats]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Current stats snapshot from the hub
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HubStats"
+
+  /api/v1/stats/history:
+    get:
+      summary: Get batch event history
+      operationId: getStatsHistory
+      tags: [Stats]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Array of recent batch events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BatchEvent"
+
+  /api/v1/status:
+    get:
+      summary: Get high-level probe status
+      operationId: getStatus
+      tags: [Stats]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Probe status overview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uptime_seconds:
+                    type: number
+                    format: float
+                    example: 3600.5
+                  workers:
+                    $ref: "#/components/schemas/WorkerStats"
+                  pending_edges:
+                    type: integer
+                    example: 42
+                  pending_nodes:
+                    type: integer
+                    example: 17
+                  discovered:
+                    type: integer
+                    description: Total domains discovered so far
+                    example: 1500
+
+  # ── Workers ───────────────────────────────────────────────────────────────────
+
+  /api/v1/workers:
+    get:
+      summary: Get worker pool statistics
+      operationId: getWorkers
+      tags: [Workers]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Worker pool stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkerStats"
+
+  /api/v1/workers/scale:
+    post:
+      summary: Scale the worker pool to a target count
+      operationId: scaleWorkers
+      tags: [Workers]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [count]
+              properties:
+                count:
+                  type: integer
+                  minimum: 0
+                  example: 128
+      responses:
+        "200":
+          description: Scaling result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scaled_to:
+                    type: integer
+                    example: 128
+                  workers:
+                    $ref: "#/components/schemas/WorkerStats"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # ── Circuit Breakers ──────────────────────────────────────────────────────────
+
+  /api/v1/breakers:
+    get:
+      summary: List all circuit breaker states
+      operationId: getBreakers
+      tags: [Breakers]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Map of host to circuit breaker state
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/BreakerState"
+
+  /api/v1/breakers/reset:
+    post:
+      summary: Reset all circuit breakers
+      operationId: resetAllBreakers
+      tags: [Breakers]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "200":
+          description: All breakers reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reset:
+                    type: string
+                    example: all
+                  count:
+                    type: integer
+                    example: 5
+
+  /api/v1/breakers/{host}/reset:
+    post:
+      summary: Reset a single circuit breaker by host
+      operationId: resetBreaker
+      tags: [Breakers]
+      security:
+        - bearerAuth: [write]
+      parameters:
+        - $ref: "#/components/parameters/host"
+      responses:
+        "200":
+          description: Breaker reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reset:
+                    type: string
+                    example: example.com
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # ── Rate Limits ───────────────────────────────────────────────────────────────
+
+  /api/v1/ratelimits:
+    get:
+      summary: Get per-host rate limit configuration and active hosts
+      operationId: getRateLimits
+      tags: [RateLimits]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Current rate limit settings and per-host stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  per_host_rate:
+                    type: number
+                    format: float
+                    description: Requests per second allowed per host
+                    example: 1.0
+                  per_host_burst:
+                    type: integer
+                    description: Burst size per host
+                    example: 5
+                  hosts:
+                    type: object
+                    additionalProperties:
+                      type: object
+                    description: Per-host limiter statistics
+
+    put:
+      summary: Update global per-host rate limit settings
+      operationId: setRateLimits
+      tags: [RateLimits]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rate_per_host:
+                  type: number
+                  format: float
+                  example: 2.0
+                rate_burst:
+                  type: integer
+                  example: 10
+      responses:
+        "200":
+          description: Updated rate limit settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rate_per_host:
+                    type: number
+                  rate_burst:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/ratelimits/{host}/reset:
+    post:
+      summary: Notify that a per-host rate limiter will expire via TTL
+      operationId: resetRateLimit
+      tags: [RateLimits]
+      security:
+        - bearerAuth: [write]
+      parameters:
+        - $ref: "#/components/parameters/host"
+      responses:
+        "200":
+          description: Informational response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  host:
+                    type: string
+
+  # ── Dedup ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/dedup/{key}:
+    get:
+      summary: Check whether a dedup key has been seen
+      operationId: checkDedup
+      tags: [Dedup]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          example: domain|example.com
+      responses:
+        "200":
+          description: Dedup check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    type: string
+                  seen:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+    delete:
+      summary: Delete a specific dedup key
+      operationId: deleteDedupKey
+      tags: [Dedup]
+      security:
+        - bearerAuth: [write]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: string
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/dedup:
+    delete:
+      summary: Clear all dedup entries (admin only)
+      operationId: clearDedup
+      tags: [Dedup]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: Dedup store cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleared:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  # ── Robots ────────────────────────────────────────────────────────────────────
+
+  /api/v1/robots:
+    get:
+      summary: Get robots.txt cache status
+      operationId: getRobots
+      tags: [Robots]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Cache status message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  status:
+                    type: string
+                    example: active
+
+    delete:
+      summary: Attempt to clear the robots.txt cache (TTL-based; informational)
+      operationId: clearRobots
+      tags: [Robots]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "200":
+          description: Informational response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  # ── Spool ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/spool:
+    get:
+      summary: List spooled batch files
+      operationId: getSpool
+      tags: [Spool]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Spool directory listing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  spool_dir:
+                    type: string
+                    example: spool
+                  count:
+                    type: integer
+                    example: 3
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        size:
+                          type: integer
+                        modified:
+                          type: string
+                          format: date-time
+
+    delete:
+      summary: Delete all spooled batch files
+      operationId: clearSpool
+      tags: [Spool]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "200":
+          description: Number of files deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleared:
+                    type: integer
+
+  /api/v1/spool/retry:
+    post:
+      summary: Retry delivery of spooled batches
+      operationId: retrySpool
+      tags: [Spool]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "200":
+          description: Retry initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: spool retry initiated
+
+  # ── Emitter ───────────────────────────────────────────────────────────────────
+
+  /api/v1/emitter:
+    get:
+      summary: Get emitter status and pending batch counts
+      operationId: getEmitter
+      tags: [Emitter]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Emitter status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending_edges:
+                    type: integer
+                    example: 0
+                  pending_nodes:
+                    type: integer
+                    example: 0
+                  ingest:
+                    type: string
+                    example: "http://ingest.example.com/batch"
+                  spool_dir:
+                    type: string
+                    example: spool
+
+  /api/v1/emitter/flush:
+    post:
+      summary: Force-flush the current in-memory batch
+      operationId: flushEmitter
+      tags: [Emitter]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "200":
+          description: Flush triggered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  flushed:
+                    type: boolean
+                    example: true
+
+  # ── Excludes ──────────────────────────────────────────────────────────────────
+
+  /api/v1/excludes:
+    get:
+      summary: Get the current TLD exclusion list
+      operationId: getExcludes
+      tags: [Excludes]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Current exclusion list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exclude_tlds:
+                    type: array
+                    items:
+                      type: string
+                    example: ["gov", "mil", "int"]
+
+    put:
+      summary: Replace the entire TLD exclusion list
+      operationId: setExcludes
+      tags: [Excludes]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [exclude_tlds]
+              properties:
+                exclude_tlds:
+                  type: array
+                  items:
+                    type: string
+                  example: ["gov", "mil"]
+      responses:
+        "200":
+          description: Updated exclusion list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exclude_tlds:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+    post:
+      summary: Add a single TLD to the exclusion list
+      operationId: addExclude
+      tags: [Excludes]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tld]
+              properties:
+                tld:
+                  type: string
+                  example: edu
+      responses:
+        "200":
+          description: Updated exclusion list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exclude_tlds:
+                    type: array
+                    items:
+                      type: string
+                  message:
+                    type: string
+                    description: Present when the TLD was already excluded
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/excludes/{tld}:
+    delete:
+      summary: Remove a TLD from the exclusion list
+      operationId: removeExclude
+      tags: [Excludes]
+      security:
+        - bearerAuth: [write]
+      parameters:
+        - name: tld
+          in: path
+          required: true
+          schema:
+            type: string
+          example: edu
+      responses:
+        "200":
+          description: Updated exclusion list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exclude_tlds:
+                    type: array
+                    items:
+                      type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Discovery ─────────────────────────────────────────────────────────────────
+
+  /api/v1/discovery:
+    get:
+      summary: Get discovery limits and counters
+      operationId: getDiscovery
+      tags: [Discovery]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Discovery settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  discovered:
+                    type: integer
+                    example: 2500
+                  max_domains:
+                    type: integer
+                    example: 0
+                    description: 0 means unlimited
+                  continuous:
+                    type: boolean
+                    example: false
+
+    patch:
+      summary: Update discovery limits
+      operationId: updateDiscovery
+      tags: [Discovery]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                max_domains:
+                  type: integer
+                  description: Maximum number of domains to discover (0 = unlimited)
+                  example: 50000
+                continuous:
+                  type: boolean
+                  description: Whether to keep crawling after max_domains is reached
+                  example: true
+      responses:
+        "200":
+          description: Updated discovery settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  discovered:
+                    type: integer
+                  max_domains:
+                    type: integer
+                  continuous:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # ── Queue ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/queue:
+    get:
+      summary: Inspect the work queue (not implemented)
+      operationId: getQueue
+      tags: [Queue]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+    delete:
+      summary: Clear the work queue (not implemented)
+      operationId: clearQueue
+      tags: [Queue]
+      security:
+        - bearerAuth: [write]
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/queue/{host}:
+    delete:
+      summary: Remove a host from the queue (not implemented)
+      operationId: removeFromQueue
+      tags: [Queue]
+      security:
+        - bearerAuth: [write]
+      parameters:
+        - $ref: "#/components/parameters/host"
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  # ── Observability ─────────────────────────────────────────────────────────────
+
+  /api/v1/logs/stream:
+    get:
+      summary: Stream log output (not yet implemented)
+      operationId: streamLogs
+      tags: [Observability]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/logs/level:
+    put:
+      summary: Change the log verbosity level at runtime
+      operationId: setLogLevel
+      tags: [Observability]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level]
+              properties:
+                level:
+                  type: string
+                  enum: [debug, info, warn, error]
+                  example: debug
+      responses:
+        "200":
+          description: Level applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  level:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/metrics:
+    get:
+      summary: Get metrics endpoint reference (use /metrics for Prometheus format)
+      operationId: getMetricsJSON
+      tags: [Observability]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Metrics endpoint info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  metrics_endpoint:
+                    type: string
+                    example: ":9090/metrics"
+
+  /api/v1/metrics/reset:
+    post:
+      summary: Reset Prometheus counters (not supported; requires restart)
+      operationId: resetMetrics
+      tags: [Observability]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: Informational response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  /api/v1/telemetry:
+    get:
+      summary: Get current telemetry configuration
+      operationId: getTelemetry
+      tags: [Observability]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Telemetry config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryConfig"
+
+    patch:
+      summary: Update telemetry settings (informational; requires restart to take effect)
+      operationId: updateTelemetry
+      tags: [Observability]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                otel_endpoint:
+                  type: string
+                otel_insecure:
+                  type: boolean
+                otel_service:
+                  type: string
+      responses:
+        "200":
+          description: Informational response with current telemetry config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  telemetry:
+                    $ref: "#/components/schemas/TelemetryConfig"
+
+  /api/v1/health/checkers:
+    get:
+      summary: Get health checker registration status
+      operationId: getCheckers
+      tags: [Observability]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Checker info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+    post:
+      summary: Register a health checker (not supported)
+      operationId: addChecker
+      tags: [Observability]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/health/checkers/{name}:
+    delete:
+      summary: Remove a health checker (not supported)
+      operationId: removeChecker
+      tags: [Observability]
+      security:
+        - bearerAuth: [write]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/output:
+    get:
+      summary: Get current output configuration
+      operationId: getOutput
+      tags: [Observability]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: Output config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutputConfig"
+
+    patch:
+      summary: Update output configuration (Tier 2 — applied with warnings)
+      operationId: updateOutput
+      tags: [Observability]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  enum: [json, ndjson]
+                ingest:
+                  type: string
+                spool_dir:
+                  type: string
+      responses:
+        "200":
+          description: Updated output config and warnings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  output:
+                    $ref: "#/components/schemas/OutputConfig"
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ── Diagnostics ───────────────────────────────────────────────────────────────
+
+  /api/v1/dns/{host}:
+    get:
+      summary: Perform a live DNS lookup for a host
+      operationId: dnsResolve
+      tags: [Diagnostics]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - $ref: "#/components/parameters/host"
+      responses:
+        "200":
+          description: DNS resolution results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  host:
+                    type: string
+                  ips:
+                    type: array
+                    items:
+                      type: string
+                    example: ["93.184.216.34"]
+                  ns:
+                    type: array
+                    items:
+                      type: string
+                  cname:
+                    type: string
+                  mx:
+                    type: array
+                    items:
+                      type: string
+                  txt:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/tls/{host}:
+    get:
+      summary: Fetch the TLS certificate for a host
+      operationId: tlsFetch
+      tags: [Diagnostics]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - $ref: "#/components/parameters/host"
+      responses:
+        "200":
+          description: TLS certificate details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeCert"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: TLS connection error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/httpclient:
+    get:
+      summary: Get HTTP client configuration
+      operationId: getHTTPClient
+      tags: [Diagnostics]
+      security:
+        - bearerAuth: [read]
+      responses:
+        "200":
+          description: HTTP client config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPClientConfig"
+
+    patch:
+      summary: Update HTTP client configuration (requires restart)
+      operationId: updateHTTPClient
+      tags: [Diagnostics]
+      security:
+        - bearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  # ── API Keys ──────────────────────────────────────────────────────────────────
+
+  /api/v1/keys:
+    get:
+      summary: List all API keys (admin only)
+      operationId: listKeys
+      tags: [Keys]
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: All registered API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/APIKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      summary: Create a new API key (admin only)
+      operationId: createKey
+      tags: [Keys]
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: ci-pipeline
+                scope:
+                  type: string
+                  enum: [read, write, admin]
+                  default: read
+                  example: write
+      responses:
+        "201":
+          description: Created API key (key value shown only on creation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    type: string
+                    example: spyder_a1b2c3d4e5f6...
+                  name:
+                    type: string
+                  scope:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/keys/{key}:
+    delete:
+      summary: Delete an API key (admin only)
+      operationId: deleteKey
+      tags: [Keys]
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: The API key token to delete
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Query ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/query/domains:
+    get:
+      summary: List discovered domain nodes
+      operationId: listDomains
+      tags: [Query]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+        - name: apex
+          in: query
+          schema:
+            type: string
+          description: Filter by apex domain
+          example: example.com
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Substring search on hostname
+      responses:
+        "200":
+          description: Paginated domain list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageOfDomains"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/query/domains/{host}:
+    get:
+      summary: Get a single domain with its edges
+      operationId: getDomain
+      tags: [Query]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - $ref: "#/components/parameters/host"
+      responses:
+        "200":
+          description: Domain detail with edges
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/query/edges:
+    get:
+      summary: List discovered edges
+      operationId: listEdges
+      tags: [Query]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum:
+              - RESOLVES_TO
+              - USES_NS
+              - ALIAS_OF
+              - USES_MX
+              - LINKS_TO
+              - USES_CERT
+          description: Filter by edge type
+        - name: source
+          in: query
+          schema:
+            type: string
+          description: Filter by source node
+        - name: target
+          in: query
+          schema:
+            type: string
+          description: Filter by target node
+      responses:
+        "200":
+          description: Paginated edge list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageOfEdges"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/query/ips:
+    get:
+      summary: List discovered IP nodes
+      operationId: listIPs
+      tags: [Query]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Substring or CIDR search on IP address
+      responses:
+        "200":
+          description: Paginated IP list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageOfIPs"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/query/certs:
+    get:
+      summary: List discovered TLS certificate nodes
+      operationId: listCerts
+      tags: [Query]
+      security:
+        - bearerAuth: [read]
+      parameters:
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Substring search on subject CN or issuer CN
+      responses:
+        "200":
+          description: Paginated certificate list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageOfCerts"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+# ── Components ────────────────────────────────────────────────────────────────
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        API key issued by `POST /api/v1/keys`. Pass as `Authorization: Bearer <key>`.
+        Keys prefixed with `spyder_` followed by 64 hex characters.
+
+  parameters:
+    host:
+      name: host
+      in: path
+      required: true
+      schema:
+        type: string
+      example: example.com
+
+    cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+      description: Opaque pagination cursor from `next_cursor` in the previous response
+
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 50
+      description: Maximum items to return per page
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, error]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: NOT_FOUND
+        error:
+          type: string
+          description: Human-readable error message
+          example: domain not found
+
+    NodeDomain:
+      type: object
+      properties:
+        host:
+          type: string
+          example: www.example.com
+        apex:
+          type: string
+          example: example.com
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    NodeIP:
+      type: object
+      properties:
+        ip:
+          type: string
+          example: 93.184.216.34
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    NodeCert:
+      type: object
+      properties:
+        spki_sha256:
+          type: string
+          description: SHA-256 of the SubjectPublicKeyInfo DER encoding
+          example: "abc123..."
+        subject_cn:
+          type: string
+          example: example.com
+        issuer_cn:
+          type: string
+          example: Let's Encrypt Authority X3
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+
+    Edge:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - RESOLVES_TO
+            - USES_NS
+            - ALIAS_OF
+            - USES_MX
+            - LINKS_TO
+            - USES_CERT
+          example: RESOLVES_TO
+        source:
+          type: string
+          example: www.example.com
+        target:
+          type: string
+          example: 93.184.216.34
+        observed_at:
+          type: string
+          format: date-time
+        probe_id:
+          type: string
+          example: local-1
+        run_id:
+          type: string
+          example: run-1741824000
+
+    DomainDetail:
+      allOf:
+        - $ref: "#/components/schemas/NodeDomain"
+        - type: object
+          properties:
+            edges:
+              type: array
+              items:
+                $ref: "#/components/schemas/Edge"
+
+    Page:
+      type: object
+      properties:
+        items:
+          type: array
+          items: {}
+        next_cursor:
+          type: string
+          description: Cursor for the next page; absent when on the last page
+        total:
+          type: integer
+          description: Total record count (when supported by the store)
+        store:
+          type: string
+          description: Backend store identifier (e.g. "mongodb", "memory")
+
+    PageOfDomains:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/NodeDomain"
+
+    PageOfEdges:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/Edge"
+
+    PageOfIPs:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/NodeIP"
+
+    PageOfCerts:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/NodeCert"
+
+    APIKey:
+      type: object
+      properties:
+        key:
+          type: string
+          example: spyder_a1b2c3...
+        name:
+          type: string
+          example: ci-pipeline
+        scope:
+          type: string
+          enum: [read, write, admin]
+          example: write
+
+    WorkerStats:
+      type: object
+      properties:
+        active:
+          type: integer
+          example: 128
+        idle:
+          type: integer
+          example: 128
+        total:
+          type: integer
+          example: 256
+        paused:
+          type: boolean
+          example: false
+
+    BreakerState:
+      type: object
+      properties:
+        state:
+          type: string
+          enum: [closed, open, half-open]
+          example: closed
+        failures:
+          type: integer
+          example: 0
+        successes:
+          type: integer
+          example: 42
+        requests:
+          type: integer
+          example: 42
+
+    HubStats:
+      type: object
+      description: Aggregate statistics from the hub
+      additionalProperties: true
+
+    BatchEvent:
+      type: object
+      description: A single batch processing event recorded in history
+      additionalProperties: true
+
+    Config:
+      type: object
+      description: Full runtime configuration snapshot
+      properties:
+        domains:
+          type: string
+        probe:
+          type: string
+          example: local-1
+        run:
+          type: string
+          example: run-1741824000
+        ua:
+          type: string
+        exclude_tlds:
+          type: array
+          items:
+            type: string
+        crawling:
+          $ref: "#/components/schemas/CrawlingConfig"
+        batch:
+          $ref: "#/components/schemas/BatchConfig"
+        output:
+          $ref: "#/components/schemas/OutputConfig"
+        circuit_breaker:
+          $ref: "#/components/schemas/CircuitBreakerConfig"
+        http_client:
+          $ref: "#/components/schemas/HTTPClientConfig"
+        robots:
+          $ref: "#/components/schemas/RobotsConfig"
+        dedup:
+          $ref: "#/components/schemas/DedupConfig"
+        redis:
+          $ref: "#/components/schemas/RedisConfig"
+        mongodb:
+          $ref: "#/components/schemas/MongoDBConfig"
+        telemetry:
+          $ref: "#/components/schemas/TelemetryConfig"
+        logging:
+          $ref: "#/components/schemas/LoggingConfig"
+        api:
+          $ref: "#/components/schemas/APIConfig"
+
+    CrawlingConfig:
+      type: object
+      properties:
+        continuous:
+          type: boolean
+        max_domains:
+          type: integer
+          description: 0 means unlimited
+        concurrency:
+          type: integer
+          example: 256
+        rate_per_host:
+          type: number
+          format: float
+          example: 1.0
+        rate_burst:
+          type: integer
+          example: 1
+        http_timeout:
+          type: string
+          example: "15s"
+        tls_timeout:
+          type: string
+          example: "8s"
+        body_max_bytes:
+          type: integer
+          example: 524288
+
+    BatchConfig:
+      type: object
+      properties:
+        max_edges:
+          type: integer
+          example: 10000
+        flush_interval:
+          type: string
+          example: "2s"
+        node_threshold_ratio:
+          type: number
+          format: float
+          example: 0.5
+        channel_buffer:
+          type: integer
+          example: 1024
+
+    OutputConfig:
+      type: object
+      properties:
+        format:
+          type: string
+          enum: [json, ndjson]
+          example: json
+        ingest:
+          type: string
+          example: ""
+        spool_dir:
+          type: string
+          example: spool
+
+    CircuitBreakerConfig:
+      type: object
+      properties:
+        max_requests:
+          type: integer
+          example: 3
+        interval:
+          type: string
+          example: "60s"
+        timeout:
+          type: string
+          example: "30s"
+        threshold:
+          type: integer
+          example: 5
+        failure_ratio:
+          type: number
+          format: float
+          example: 0.6
+
+    HTTPClientConfig:
+      type: object
+      properties:
+        timeout:
+          type: string
+          example: "15s"
+        response_header_timeout:
+          type: string
+          example: "10s"
+        idle_conn_timeout:
+          type: string
+          example: "30s"
+        max_idle_conns:
+          type: integer
+          example: 1024
+        max_conns_per_host:
+          type: integer
+          example: 128
+
+    RobotsConfig:
+      type: object
+      properties:
+        cache_size:
+          type: integer
+          example: 4096
+        cache_ttl:
+          type: string
+          example: "24h0m0s"
+
+    DedupConfig:
+      type: object
+      properties:
+        ttl:
+          type: string
+          example: "24h0m0s"
+
+    RedisConfig:
+      type: object
+      properties:
+        addr:
+          type: string
+          example: "localhost:6379"
+        queue_addr:
+          type: string
+        queue_key:
+          type: string
+          example: spyder:queue
+        queue_lease_ttl:
+          type: string
+          example: "2m0s"
+
+    MongoDBConfig:
+      type: object
+      properties:
+        uri:
+          type: string
+          example: "mongodb://localhost:27017"
+        database:
+          type: string
+          example: spyder
+
+    TelemetryConfig:
+      type: object
+      properties:
+        metrics_addr:
+          type: string
+          example: ":9090"
+        otel_endpoint:
+          type: string
+        otel_insecure:
+          type: boolean
+          example: true
+        otel_service:
+          type: string
+          example: spyder-probe
+
+    LoggingConfig:
+      type: object
+      properties:
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+          example: info
+        quiet:
+          type: boolean
+        verbose:
+          type: boolean
+        progress:
+          type: boolean
+
+    APIConfig:
+      type: object
+      properties:
+        rate_limit:
+          type: integer
+          description: Requests per second allowed globally on the API
+          example: 100
+        rate_burst:
+          type: integer
+          description: Token bucket burst size
+          example: 20
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIKey"
+
+    ConfigPatch:
+      type: object
+      description: |
+        Partial configuration update. Any top-level key may be omitted.
+        Within each sub-object, any field may be omitted to leave it unchanged.
+      properties:
+        ua:
+          type: string
+        exclude_tlds:
+          type: array
+          items:
+            type: string
+        crawling:
+          type: object
+          properties:
+            concurrency:
+              type: integer
+            rate_per_host:
+              type: number
+            rate_burst:
+              type: integer
+            max_domains:
+              type: integer
+            continuous:
+              type: boolean
+            http_timeout:
+              type: string
+            tls_timeout:
+              type: string
+            body_max_bytes:
+              type: integer
+        batch:
+          type: object
+          properties:
+            max_edges:
+              type: integer
+            flush_interval:
+              type: string
+            node_threshold_ratio:
+              type: number
+        output:
+          type: object
+          description: Tier 2 — applied with warnings
+          properties:
+            format:
+              type: string
+            ingest:
+              type: string
+            spool_dir:
+              type: string
+        api:
+          type: object
+          properties:
+            rate_limit:
+              type: integer
+            rate_burst:
+              type: integer
+        logging:
+          type: object
+          properties:
+            level:
+              type: string
+        redis:
+          type: object
+          description: Tier 3 — rejected at runtime; requires restart
+          properties:
+            addr:
+              type: string
+            queue_addr:
+              type: string
+        mtls:
+          type: object
+          description: Tier 3 — rejected at runtime; requires restart
+          properties:
+            cert:
+              type: string
+            key:
+              type: string
+            ca:
+              type: string
+        mongodb:
+          type: object
+          description: Tier 3 — rejected at runtime; requires restart
+          properties:
+            uri:
+              type: string
+            database:
+              type: string
+        telemetry:
+          type: object
+          description: Tier 3 (metrics_addr) — rejected at runtime; requires restart
+          properties:
+            metrics_addr:
+              type: string
+
+  responses:
+
+    BadRequest:
+      description: Invalid request (malformed JSON, missing required field, etc.)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Forbidden:
+      description: API key scope insufficient for this operation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Conflict:
+      description: Operation conflicts with current state
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    RateLimited:
+      description: API rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds to wait before retrying
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    ServiceUnavailable:
+      description: Task channel full; try again later
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    NotImplemented:
+      description: Endpoint not yet implemented
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
