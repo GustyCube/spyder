@@ -98,7 +98,10 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 	ap := extract.Apex(host)
 	nodesD = append(nodesD, emit.NodeDomain{Host: host, Apex: ap, FirstSeen: now, LastSeen: now})
 
-	ips, ns, cname, mx, _ := dns.ResolveAll(ctx, host)
+	ips, ns, cname, mx, dnsErr := dns.ResolveAll(ctx, host)
+	if dnsErr != nil {
+		p.log.Debugw("dns resolve", "host", host, "err", dnsErr)
+	}
 	for _, ip := range ips {
 		if !p.dedup.Seen(emit.DedupNodeIP + ip) {
 			nodesIP = append(nodesIP, emit.NodeIP{IP: ip, FirstSeen: now, LastSeen: now})
@@ -149,7 +152,7 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 	}
 	rd, err := p.rob.Get(ctx, host)
 	if err != nil {
-		p.log.Debugw("robots.txt fetch", "host", host, "err", err)
+		p.log.Warnw("robots.txt fetch", "host", host, "err", err)
 	}
 	if !robots.Allowed(rd, ua, "/") {
 		metrics.RobotsBlocks.Inc()
@@ -178,7 +181,7 @@ func (p *Probe) CrawlOne(ctx context.Context, host string) {
 			body := io.LimitReader(resp.Body, bodyMaxBytes)
 			links, err := extract.ParseLinks(root, body)
 			if err != nil {
-				p.log.Debugw("parse links", "host", host, "err", err)
+				p.log.Warnw("parse links", "host", host, "err", err)
 			}
 			outs := extract.ExternalDomains(host, links)
 			for _, h := range outs {
